@@ -54,25 +54,43 @@ property).
 
 ## Key Design Decisions
 
-### 1. Scope: known speakers only, pairing is explicit
+### 1. Scope: dynamic discovery of any nearby speaker
 
-The original draft assumed the app could discover *and auto-pair* any speaker nearby. That
-is neither practical nor safe:
+The app has no pre-configured device list. It continuously looks for **any Bluetooth audio
+sink** near the host, and connects (pairing first if needed) to the ones in range:
 
-* A classic Bluetooth speaker is only discoverable/pairable while in pairing mode, and
-  stops advertising once connected to something.
-* An agent that auto-accepts every request lets any device in range pair with the host.
+* **Candidate filter:** a device is a candidate if it advertises the A2DP Sink UUID
+  (`0000110b-...`) or has an audio-rendering Class of Device (major class Audio/Video:
+  loudspeaker, headphones, portable audio, ...). Everything else (phones, keyboards,
+  watches) is ignored. UUIDs may not be resolved for never-seen devices, so Class of
+  Device is the first-pass filter.
+* **Already paired devices** (known to BlueZ) are connected directly.
+* **Unpaired devices** are paired automatically through a registered agent that accepts
+  SSP/PIN requests (see decision 3), then marked `Trusted`.
+* **Optional config** (`config.toml`, every key has a default) holds only tuning and
+  safety knobs: RSSI thresholds, `max_connected`, default volume, `auto_pair` on/off, and
+  optional `deny`/`allow` filters by name pattern or address. No device list is needed.
 
-So the app has two modes:
+Constraints that shape the behaviour:
 
-* **Run mode (default):** operates on an allowlist of speakers in `config.toml`
-  (address, optional alias, optional volume). These are expected to already be paired
-  and `Trusted`. Pairing is never initiated by the app in this mode.
-* **Pair mode (`bt-roam-player pair`):** scans, lists audio sinks, and pairs/trusts the
-  ones the user selects, using the auto-accept agent. The agent is registered only for
-  the duration of this command.
+* A speaker is only **discoverable/pairable while in pairing mode**. One that has never
+  been paired with this host is picked up only when the user puts it in pairing mode;
+  after that BlueZ remembers it and it is treated as paired.
+* Speakers connected to another host usually stop advertising and are unavailable; the
+  app doesn't try to steal them.
+* A paired speaker that is merely powered on is often **connectable but not
+  discoverable** (page scan only, no inquiry scan), so discovery may never report it and
+  it has no pre-connection RSSI. For such devices, presence must be checked differently:
+  periodically attempt a short-timeout connect as a probe, read RSSI from the live link,
+  and drop the connection if it is too weak. This is validated in the M1 spike and may
+  change the proximity logic for paired devices.
+* **Security:** auto-pairing means any audio device in range that is in pairing mode gets
+  paired. This is intentional for this tool, limited by the candidate filter and the
+  optional `deny`/`allow` lists. `auto_pair = false` restricts the app to already paired
+  devices. The agent auto-accepts only for devices that pass the candidate filter.
 
-An opt-in `--auto-pair` flag for run mode can come later; it is not part of the core.
+CLI: `bt-roam-player run --file track.flac` is the main mode; `list` shows what the app
+currently sees; `forget <address>` removes a paired speaker.
 
 ### 2. Proximity: RSSI source, filtering and hysteresis
 
@@ -106,16 +124,18 @@ speakers.
   * connect when smoothed RSSI > `-68 dBm` for >= 2 s
   * disconnect when smoothed RSSI < `-80 dBm` for >= 5 s
   * no RSSI sample at all for `stale_after` (e.g. 30 s) counts as "out of range"
-* All thresholds are per-speaker overridable, since transmit power varies a lot between
-  speakers.
+* Thresholds are global defaults; optional per-device overrides (matched by address or
+  name in the config) cover speakers whose transmit power differs a lot.
 
 ### 3. Pairing agent
 
 * Register an `org.bluez.Agent1` (via `bluer::agent`) with capability `NoInputNoOutput`
-  or `KeyboardDisplay` as appropriate, only in pair mode.
+  so SSP uses "just works". It is the default agent for the whole `run` session (unless
+  `auto_pair = false`).
 * SSP speakers: accept `RequestConfirmation`, `RequestAuthorization`, `AuthorizeService`.
 * Legacy-PIN speakers: `RequestPinCode` must return a PIN **string** (default `"0000"`,
   configurable), it cannot simply return `Ok(())`.
+* Requests from devices that fail the candidate filter or match `deny` are rejected.
 * After a successful pair, set `Trusted = true` so BlueZ accepts reconnects.
 
 ### 4. Audio: one stream, fanned out to N sinks
@@ -172,7 +192,8 @@ when over the limit.
 
 ## Per-Speaker State Machine
 
-One actor per allowlisted speaker, driven by Bluetooth events, audio events and timers.
+One actor per discovered candidate device (created on first sight, dropped after a long
+absence), driven by Bluetooth events, audio events and timers.
 
 ```
                     +-------------+
@@ -183,6 +204,7 @@ One actor per allowlisted speaker, driven by Bluetooth events, audio events and 
         |           +-------------+  RSSI > connect for dwell       |
         |           |   InRange   |---------------+                 |
         |           +-------------+               v                 |
+        |        (unpaired: Pairing first; fail -> Backoff)           |
         |                              +----------------+  fail     |
         |                              |   Connecting   |--------+  |
         |                              +-------+--------+        |  |
@@ -210,8 +232,11 @@ Notes:
   removal, and move the actor to `Disconnecting`/`Absent` regardless of RSSI.
 * **Failures** (connect error, `AwaitingSink` timeout, `org.bluez.Error.InProgress`, etc.)
   go to `Backoff` with exponential delay (e.g. 2 s up to 60 s), then re-evaluate.
-* `Pairing` is not a state in run mode (see decision 1). A speaker that isn't paired is
-  reported as an error at startup.
+* `Pairing` is entered from `InRange` for unpaired devices when `auto_pair` is on (agent
+  accepts, `Trusted` is set, then `Connecting`). With `auto_pair = false`, unpaired
+  devices stay `InRange` and are only reported.
+* `max_connected` is enforced across actors: when over the limit, the weakest connected
+  speaker is disconnected, and a candidate must beat it by a margin to replace it.
 * Transitions to `Linked` require **both** `Device1.Connected` and the PipeWire sink node
   being present; the profile must be A2DP sink (UUID `0000110b-...`), not HFP.
 * `Disconnecting` removes the link first (audio fades out), then calls `Disconnect`.
@@ -222,14 +247,14 @@ Notes:
 
 ```text
 src/
-├── main.rs              # clap CLI, subcommands: run, pair, list
-├── config.rs            # config.toml: thresholds, speaker allowlist, volumes
+├── main.rs              # clap CLI, subcommands: run, list, forget
+├── config.rs            # optional config.toml: thresholds, limits, allow/deny filters
 ├── orchestrator.rs      # event loop, owns the speaker actors
 ├── speaker.rs           # per-speaker state machine (pure, unit-testable)
 ├── bluetooth/
 │   ├── mod.rs
 │   ├── adapter.rs       # duty-cycled discovery, device event stream
-│   ├── agent.rs         # pairing agent (pair mode only)
+│   ├── agent.rs         # auto-accept pairing agent
 │   ├── device.rs        # connect/disconnect/trust helpers
 │   └── rssi.rs          # RssiSource trait, DiscoveryRssi, MgmtRssi
 ├── proximity.rs         # time-based EMA + hysteresis/dwell logic (pure)
@@ -290,7 +315,8 @@ RSSI reader will need a small amount of raw socket code (`libc`/`nix`).
 |---|------------------------|-----------|
 | 1 | Disconnect rule depends on RSSI, but BlueZ doesn't report RSSI for connected classic devices | `RssiSource` abstraction; mgmt API for connected links; early spike |
 | 2 | Continuous discovery degrades A2DP streaming | Duty-cycled discovery |
-| 3 | Auto-pair anything in range: unsafe, and speakers are only pairable in pairing mode | Allowlist run mode + explicit `pair` subcommand |
+| 3 | Auto-pair anything in range: speakers are only pairable in pairing mode, and indiscriminate pairing is a risk | Kept, since dynamic discovery is a requirement. Limited by an audio-sink candidate filter, optional allow/deny lists and an `auto_pair` switch |
+| 3b | Paired speakers that are on but not discoverable give no pre-connection RSSI | Probe-connect and read RSSI from the live link; to be validated in M1 |
 | 4 | `RequestPinCode` "returning Ok(())" is invalid; it must return a PIN string | Documented |
 | 5 | "Virtual source" is wrong; the player is an output stream. Linking one stream to one sink couldn't serve multiple speakers | One stream, fan-out links to N sinks |
 | 6 | `libpulse` streams can only target one sink; `rodio` hides the node/ports | `pipewire-rs` for stream, links and volume |

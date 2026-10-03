@@ -1,7 +1,7 @@
 # Rust / Cargo build output
 /target/
 
-# Local config that may contain device addresses (keep config.example.toml tracked)
+# Local config (may contain allow/deny device addresses; keep config.example.toml tracked)
 /config.toml
 
 # Nix / direnv

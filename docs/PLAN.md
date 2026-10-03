@@ -28,9 +28,10 @@ starting the next one, do all of the following in the same commit as the milesto
 ## M0: Project scaffold
 
 * `cargo init` in `bluetooth-audio-player`, add dependencies from DESIGN.md.
-* `tracing` setup, `clap` skeleton with subcommands `run`, `pair`, `list`.
-* `config.rs`: load `config.toml` (thresholds, `max_connected`, speaker allowlist with
-  address/alias/volume/threshold overrides). Unit tests for parsing and defaults.
+* `tracing` setup, `clap` skeleton with subcommands `run`, `list`, `forget`.
+* `config.rs`: load an optional `config.toml` (thresholds, `max_connected`, default volume,
+  `auto_pair`, `allow`/`deny` filters, optional per-device overrides). Every key has a
+  default and the file may be absent. Unit tests for parsing and defaults.
 * CI-ish checks: `cargo fmt`, `cargo clippy`, `cargo nextest run`.
 
 **Done when:** `bt-roam-player list --help` works and config round-trips in tests.
@@ -47,6 +48,12 @@ starting the next one, do all of the following in the same commit as the milesto
    output), confirm both play.
 4. **Volume.** Set node volume on a freshly appearing BT sink; check whether WirePlumber
    overrides it.
+5. **Paired-but-not-discoverable speakers.** Power on a previously paired speaker and
+   check whether discovery ever reports it (and with what RSSI). If not, prototype the
+   probe-connect approach (short-timeout connect, then read link RSSI) and measure how long
+   a failed probe takes and whether it disturbs other active streams.
+6. **Candidate filter.** Dump Class of Device and UUIDs for the speakers/headphones at
+   hand (unpaired and paired) and confirm the filter selects them and rejects phones etc.
 
 **Done when:** each question has a written answer and DESIGN.md is adjusted if reality
 differed.
@@ -83,27 +90,35 @@ both transitions.
 * `bluetooth/device.rs`: connect, disconnect, trusted/paired checks, A2DP UUID check,
   `Connected` change events. Map BlueZ errors (`InProgress`, `AlreadyConnected`,
   `Failed`, ...) to a typed error.
-* Dev CLI `list`: prints nearby/known audio devices with smoothed RSSI.
+* Candidate filter (A2DP Sink UUID / audio Class of Device, plus `allow`/`deny`), as a pure
+  function with unit tests.
+* Presence detection for paired-but-not-discoverable devices (probe-connect), if M1 showed
+  it is needed.
+* Dev CLI `list`: prints nearby and known audio candidates with smoothed RSSI and
+  paired/connected status.
 
-**Done when:** `list` shows live RSSI for allowlisted speakers, including once connected
-(if M1 found it feasible).
+**Done when:** `list` shows live candidates and RSSI for speakers around, including once
+connected (if M1 found it feasible), and ignores non-audio devices.
 
-## M5: Pair mode
+## M5: Auto-pairing agent
 
-* `bluetooth/agent.rs`: `Agent1` implementation (SSP accept, configurable legacy PIN).
-* `pair` subcommand: scan, show audio sinks, interactive selection, pair + trust, optionally
-  append to `config.toml`.
+* `bluetooth/agent.rs`: `Agent1` implementation (SSP accept, configurable legacy PIN) that
+  accepts only for candidates passing the filter and not on `deny`.
+* Pairing flow: pair, set `Trusted`, then hand over to the connect step. Honour
+  `auto_pair = false`.
+* `forget <address>` subcommand to remove a paired speaker.
 
-**Done when:** a speaker in pairing mode can be paired and trusted from the CLI and
-reconnects later without the agent.
+**Done when:** a speaker put in pairing mode near the host is paired and trusted without
+interaction, a non-audio device in pairing mode is refused, and the speaker reconnects
+later.
 
 ## M6: Speaker state machine and orchestrator
 
 * `speaker.rs`: states and transitions from DESIGN.md as a pure function
   `(State, Event, Instant) -> (State, Vec<Action>)`. Table-driven tests for every
   transition, including failure/backoff and external disconnects.
-* `orchestrator.rs`: owns one actor per allowlisted speaker, fans events in from BT and
-  audio, executes actions (connect, link, set volume, unlink, disconnect), enforces
+* `orchestrator.rs`: creates an actor per newly seen candidate (and drops it after a long
+  absence), fans events in from BT and audio, executes actions (connect, link, set volume, unlink, disconnect), enforces
   `max_connected` (keep the strongest).
 * Wire `run` subcommand end to end; graceful shutdown on SIGINT/SIGTERM (unlink, optional
   disconnect, stop stream).
@@ -116,12 +131,12 @@ unlinks and disconnects, while the loop keeps playing.
 * Handle `bluetoothd` or PipeWire restarts (reconnect to bus/daemon, rebuild state).
 * Multi-speaker soak test (2-3 speakers, hours), check for leaks and stuck states.
 * Logging review (state transitions at `info`, raw RSSI at `trace`), clear startup errors
-  for missing permissions, unpaired speakers, absent adapter.
-* Docs: README with setup (`setcap`, pairing, config example), systemd user unit.
+  for missing permissions, absent adapter.
+* Docs: README with setup (`setcap`, auto-pairing behaviour and its security implications,
+  config example), systemd user unit.
 
 ## Later / out of scope for v1
 
-* Opt-in `--auto-pair` in run mode.
 * Per-speaker delay compensation for same-room use.
 * Keeping the loop position running with no speakers (null-sink mode).
 * Streaming decode for very large files; playlists.
