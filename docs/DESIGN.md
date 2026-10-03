@@ -61,7 +61,7 @@ sink** near the host, and connects (pairing first if needed) to the ones in rang
 
 * **Candidate filter:** a device is a candidate if it advertises the A2DP Sink UUID
   (`0000110b-...`) or its Class of Device is major class Audio/Video **and** its minor
-  class is an audio *output* (loudspeaker `0x05`, headphones `0x06`, portable audio
+  class is an audio *output* (wearable headset `0x01`, loudspeaker `0x05`, headphones `0x06`, portable audio
   `0x07`, car audio `0x08`, hi-fi `0x0a`; the minor class is `(class >> 2) & 0x3f`).
   Everything else (phones, keyboards, watches) is ignored. UUIDs may not be resolved for
   never-seen devices, so Class of Device is the first-pass filter.

@@ -145,6 +145,7 @@ dependencies = [
  "bluer",
  "clap",
  "futures",
+ "libc",
  "libspa-sys",
  "pipewire",
  "serde",

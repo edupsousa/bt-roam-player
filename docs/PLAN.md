@@ -155,7 +155,7 @@ both transitions.
 * Not covered here: per-device override plumbing and choosing which tracker applies to which
   speaker; that belongs to M4/M6.
 
-## M4: Bluetooth manager
+## M4: Bluetooth manager [DONE 2026-10-03]
 
 * `bluetooth/adapter.rs`: power on adapter, **set `Pairable = true`**, duty-cycled
   discovery, stream of device property changes normalised to `BtEvent`.
@@ -179,6 +179,22 @@ both transitions.
 
 **Done when:** `list` shows live candidates and RSSI for speakers around, including once
 connected (if M1 found it feasible), and ignores non-audio devices.
+
+**Outcome / deviations:** Built as planned, 20 new unit tests plus an `#[ignore]`d live test.
+* Layout: `bluetooth/{candidate,mgmt,device,adapter,rssi}.rs` and `src/list.rs`. Pure parts
+  (filter, mgmt frame encode/parse, error mapping) are unit-tested; `libc` and `futures`
+  became normal dependencies, and `thiserror` is now used.
+* Verified on hardware: `list` hides non-audio devices and shows the three known speakers.
+  With the JBL connected, `sudo list` shows link RSSI `0.0`, and the ignored live test
+  returns `rssi 0, tx 12/12`. Without `CAP_NET_ADMIN`, `list` warns once and leaves the link
+  column empty. (`sudo` needs `env LD_LIBRARY_PATH=...` here because the nix devShell
+  libraries are not inherited.)
+* Candidate filter also accepts minor class `0x01` (wearable headset): the WF-1000XM5
+  (`0x240404`) reports it, so the planned fixture would otherwise have been rejected.
+* bluer does not expose `Device1.Bonded`; checking it moves to M5 (raw D-Bus read).
+* Not exercised: probe-connect fallback (not implemented, stays optional), duty-cycled
+  discovery timing beyond a 12 s run, `Removed` events, and the mgmt reading changing with
+  distance (already seen in M1).
 
 ## M5: Auto-pairing agent
 

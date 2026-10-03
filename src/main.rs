@@ -1,5 +1,7 @@
 mod audio;
+mod bluetooth;
 mod config;
+mod list;
 mod proximity;
 
 use std::path::PathBuf;
@@ -62,7 +64,14 @@ enum Command {
         seconds: Option<u64>,
     },
     /// Show the audio speakers currently seen, with RSSI and paired/connected status
-    List,
+    List {
+        /// Seconds of discovery before printing
+        #[arg(short, long, default_value_t = 15)]
+        seconds: u64,
+        /// Also show devices that are not audio candidates
+        #[arg(short, long)]
+        all: bool,
+    },
     /// Remove a paired speaker
     Forget {
         /// Bluetooth address, e.g. AA:BB:CC:DD:EE:FF
@@ -104,7 +113,7 @@ async fn main() -> Result<()> {
             unlink_after,
             seconds,
         } => play(file, sinks, addresses, volume, ramp, unlink_after, seconds).await,
-        Command::List => bail!("`list` is not implemented yet (M4)"),
+        Command::List { seconds, all } => list::list(&config, seconds, all).await,
         Command::Forget { address } => {
             bail!("`forget` is not implemented yet (M5); address: {address}")
         }
