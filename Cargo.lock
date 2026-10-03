@@ -144,6 +144,8 @@ dependencies = [
  "anyhow",
  "bluer",
  "clap",
+ "futures",
+ "libspa-sys",
  "pipewire",
  "serde",
  "symphonia",

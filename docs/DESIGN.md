@@ -60,10 +60,16 @@ The app has no pre-configured device list. It continuously looks for **any Bluet
 sink** near the host, and connects (pairing first if needed) to the ones in range:
 
 * **Candidate filter:** a device is a candidate if it advertises the A2DP Sink UUID
-  (`0000110b-...`) or has an audio-rendering Class of Device (major class Audio/Video:
-  loudspeaker, headphones, portable audio, ...). Everything else (phones, keyboards,
-  watches) is ignored. UUIDs may not be resolved for never-seen devices, so Class of
-  Device is the first-pass filter.
+  (`0000110b-...`) or its Class of Device is major class Audio/Video **and** its minor
+  class is an audio *output* (loudspeaker `0x05`, headphones `0x06`, portable audio
+  `0x07`, car audio `0x08`, hi-fi `0x0a`; the minor class is `(class >> 2) & 0x3f`).
+  Everything else (phones, keyboards, watches) is ignored. UUIDs may not be resolved for
+  never-seen devices, so Class of Device is the first-pass filter.
+  **Spike finding:** matching the major class alone is too loose. Neighbouring TVs
+  (class `0x0c043c` / `0x08043c`, minor `0x0f` "video display and loudspeaker") passed it,
+  and one advertised A2DP sink too. Video-display minor classes (`0x0c`-`0x0f`) are
+  rejected even if A2DP is advertised, unless the device is on the `allow` list.
+  Real samples: JBL GO 2 `0x200414`, Echo Studio `0x2c0414`, WF-1000XM5 `0x240404`.
 * **Already paired devices** (known to BlueZ) are connected directly.
 * **Unpaired devices** are paired automatically through a registered agent that accepts
   SSP/PIN requests (see decision 3), then marked `Trusted`.
@@ -82,8 +88,17 @@ Constraints that shape the behaviour:
   discoverable** (page scan only, no inquiry scan), so discovery may never report it and
   it has no pre-connection RSSI. For such devices, presence must be checked differently:
   periodically attempt a short-timeout connect as a probe, read RSSI from the live link,
-  and drop the connection if it is too weak. This is validated in the M1 spike and may
-  change the proximity logic for paired devices.
+  and drop the connection if it is too weak.
+  **Spike finding (JBL GO 2):** a paired speaker that is powered on but not in pairing
+  mode is reported by discovery with **no RSSI**, and **reconnects by itself** within a
+  few seconds of power-on (the speaker initiates, given a stored bond). A probe-connect to
+  a powered-off speaker blocks for **~5.2 s** and fails with `br-connection-page-timeout`
+  (measured twice). So: (a) the app cannot gate *connecting* on RSSI for such speakers;
+  presence is "Connected became true", and proximity only governs *disconnecting*
+  (mgmt RSSI) plus a cool-down so a speaker we dropped for being too far is not
+  immediately re-accepted; (b) probes are a fallback only, rate-limited (a 5 s page scan
+  occupies the radio; its effect on other active streams is **not yet measured**, to be
+  tested with two speakers in M6/M7).
 * **Security:** auto-pairing means any audio device in range that is in pairing mode gets
   paired. This is intentional for this tool, limited by the candidate filter and the
   optional `deny`/`allow` lists. `auto_pair = false` restricts the app to already paired
@@ -111,10 +126,29 @@ property) is used to decide *when to connect*; `MgmtRssi` (mgmt socket) is used 
 warning. A **spike is required early** (see PLAN.md, M1) to confirm real behaviour with the
 target speakers, since it varies by controller and speaker.
 
+**Spike findings (M1, JBL GO 2, Intel-class laptop controller):**
+
+* `Device1.RSSI` is frozen at its last pre-connection value once connected, even while
+  discovery runs. It is unusable for disconnect decisions, as predicted.
+* The mgmt `Get Connection Information` call works on the live link but needs
+  `CAP_NET_ADMIN` (`Permission Denied` otherwise). There is no group that grants it; it
+  must be put on the process (on NixOS: `security.wrappers`; elsewhere `setcap` on a
+  binary outside a read-only store).
+* **mgmt RSSI is relative, not dBm.** For BR/EDR it is measured against the controller's
+  "golden receive power range": `0` means inside the ideal window, negative means below
+  it. Walking away and back gave `0 -> -5 -> -11 -> -20 -> -24 -> -27 -> ... -8 -> 0`, and
+  the link stayed up throughout. The values update in steps about every **3 s**.
+  Therefore the `-68/-80 dBm` thresholds apply only to discovery RSSI (true dBm); mgmt
+  thresholds are separate and expressed in dB below the golden range (provisional defaults:
+  re-accept above `-10`, disconnect below `-25`), and the dwell/EMA times must account for
+  the ~3 s update period (`tau` >= 5 s, disconnect dwell >= 6 s).
+
 Discovery also has a cost: inquiry on classic radios competes with active A2DP streams and
 can cause audio glitches. Run discovery in **duty-cycled bursts** (e.g. 10 s on / 20 s off,
 configurable) rather than continuously, and use the mgmt RSSI for already-connected
-speakers.
+speakers. *Spike result:* one speaker over SBC with 20 s of continuous discovery gave no
+audible glitches (listened to twice), so the duty cycle is a precaution rather than a
+proven need; re-check with 2-3 speakers in M7.
 
 **Filtering:**
 
@@ -137,6 +171,14 @@ speakers.
   configurable), it cannot simply return `Ok(())`.
 * Requests from devices that fail the candidate filter or match `deny` are rejected.
 * After a successful pair, set `Trusted = true` so BlueZ accepts reconnects.
+* **The adapter must be `Pairable = true` while pairing** (the app sets it on startup).
+  Spike finding: with `Pairable: no` the host sends "No Bonding" in its IO capability
+  reply, the kernel reports the link key with `Store hint: No`, and BlueZ never stores it.
+  Pairing then *appears* to succeed (`Paired: yes`, `Bonded: no`) but the bond vanishes
+  within minutes, and the next connect fails with `br-connection-key-missing`. This
+  adapter had `Pairable: no` (it happens intermittently on this system and also affected
+  other devices, so something else seems to toggle it). Pair success must be judged by
+  `Bonded`, not `Paired`; on `br-connection-key-missing`, `RemoveDevice` and re-pair.
 
 ### 4. Audio: one stream, fanned out to N sinks
 
@@ -184,6 +226,11 @@ when over the limit.
 * WirePlumber may restore a previously saved volume shortly after the node appears. Apply
   the volume **after** the node reaches the `idle`/`running` state, and re-assert once if
   the value is changed within the first ~1 s. Verify during the spike.
+  **Spike result:** WirePlumber restores a previously saved volume when the sink appears
+  (observed 0.66, 0.39, 0.13 on successive connections), and an explicit write immediately
+  after the sink appeared stuck for the 5 s observed, both during playback and just after
+  reconnect. No override was seen, so the "re-assert once after ~1 s" step stays as a cheap
+  safeguard, not a proven need. (Tested via `wpctl set-volume`, not yet via node `Props`.)
 * Optionally ramp from 0 to target over ~500 ms to avoid a click.
 * Volume is applied to the sink node, so it also affects other apps using that speaker.
   Applying it to the link or a per-link volume stage is an alternative to evaluate.
@@ -326,3 +373,8 @@ RSSI reader will need a small amount of raw socket code (`libc`/`nix`).
 | 10 | State machine had no failure, backoff or external-disconnect handling, and fixed per-sample EMA ignored irregular sampling | Added states and time-based EMA |
 | 11 | Stale crate versions (`zbus 4.4`, `rodio 0.19`) | Updated; `bluer` instead of `zbus` |
 | 12 | Unmentioned constraints: A2DP latency skew, radio capacity, unlinked stream pauses | Documented as known limitations |
+| 13 | M1: audio major class alone matches TVs | Candidate filter also checks the minor class and rejects video-display minors |
+| 14 | M1: mgmt RSSI is relative to the golden range, not dBm, and updates ~every 3 s | Separate mgmt thresholds, longer EMA/dwell |
+| 15 | M1: `Pairable: no` makes pairing succeed without bonding | App sets `Pairable = true`; judge success by `Bonded`; re-pair on `br-connection-key-missing` |
+| 16 | M1: paired speakers reconnect on their own and have no pre-connection RSSI | Proximity governs disconnect plus a re-accept cool-down; probes are a rate-limited fallback (~5 s page timeout) |
+| 17 | M1: fan-out, volume and discovery-during-streaming confirmed with one speaker | No design change; multi-speaker checks moved to M6/M7 |

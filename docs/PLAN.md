@@ -48,7 +48,7 @@ starting the next one, do all of the following in the same commit as the milesto
 * Subcommands `run`, `list`, `forget` parse arguments but bail with "not implemented yet".
 * Added `config.example.toml`.
 
-## M1: Spikes (throwaway code, findings written back to DESIGN.md)
+## M1: Spikes (throwaway code, findings written back to DESIGN.md) [DONE 2026-10-03]
 
 1. **RSSI on connected devices.** With a real speaker: log `Device1.RSSI` before, during and
    after connection; then read RSSI via the mgmt socket (`Get Connection Information`).
@@ -70,6 +70,31 @@ starting the next one, do all of the following in the same commit as the milesto
 **Done when:** each question has a written answer and DESIGN.md is adjusted if reality
 differed.
 
+**Outcome / deviations:** All six questions answered with one real speaker (JBL GO 2); the
+details are in DESIGN.md (decisions 1-5 and Appendix A rows 13-17). Throwaway code is in
+`examples/spike_bt.rs` (BlueZ dump/watch/connect) and `examples/spike_pw.rs` (PipeWire
+fan-out); `futures` and `libspa-sys` were added as dev-dependencies for them.
+1. **RSSI:** `Device1.RSSI` freezes once connected. mgmt RSSI works but needs
+   `CAP_NET_ADMIN`, is **relative to the golden range** (0 = ideal, down to -27 at the far
+   point of a walk) and updates about every 3 s. Only checked with `btmgmt` (not our own
+   mgmt-socket code, which is M4).
+2. **Discovery vs streaming:** no audible glitches with 20 s of continuous discovery (one
+   speaker, SBC; listening test, no measurement).
+3. **Fan-out:** one `autoconnect=false` stream linked to the laptop output and the JBL via
+   `link-factory` (`object.linger=false`); both audible.
+4. **Volume:** WirePlumber restores a saved volume on connect; an explicit write stuck. Tested
+   with `wpctl`, so setting `Props` through the node proxy is still to be verified in M2.
+5. **Paired-but-not-discoverable:** powered-on paired speaker shows no RSSI in discovery and
+   reconnects itself; a failed probe-connect takes ~5.2 s (`br-connection-page-timeout`).
+   The effect of a probe on other streams was **not measured** (needs two speakers).
+6. **Candidate filter:** major class alone also matches TVs; minor-class check added.
+* **Unplanned finding:** pairing silently failed to bond because the adapter had
+  `Pairable: no` (see DESIGN decision 3). The three earlier pairing failures in this
+  milestone were caused by it. The adapter setting is not persistent on this machine, so M4
+  sets it explicitly.
+
+**Downstream changes made after M1:** see the edits to M2-M7 below.
+
 ## M2: Audio engine (no Bluetooth)
 
 * `audio/decode.rs`: symphonia decode to f32 PCM at the graph's sample rate; resample if
@@ -77,7 +102,12 @@ differed.
 * `audio/stream.rs`: looping playback stream on a dedicated PipeWire thread.
 * `audio/graph.rs`: registry listener that tracks sink nodes and exposes
   `address -> node id` (from `api.bluez5.address`); `link(node)` / `unlink(node)`.
-* `audio/volume.rs`: set/ramp node volume.
+* `audio/volume.rs`: set/ramp node volume via node `Props` (M1 only proved this through
+  `wpctl`; confirm the proxy route is not overridden by WirePlumber, and keep the
+  re-assert-once safeguard).
+* Reuse the registry/link code from `examples/spike_pw.rs` (match ports by `node.id`,
+  `port.direction`, `audio.channel`); the spike polls on a timer, the engine should link
+  from registry events instead.
 * `AudioEngine` handle: `AudioCommand::{Link, Unlink, SetVolume}` in,
   `AudioEvent::{SinkAppeared, SinkRemoved}` out.
 * Dev CLI: `bt-roam-player` plays a file to chosen node names, for testing without BT logic.
@@ -89,6 +119,10 @@ volume set.
 
 * `proximity.rs`: time-based EMA, hysteresis with connect/disconnect dwell, stale-sample
   timeout. Driven by explicit timestamps, no I/O.
+* Two scales (M1): true dBm from discovery, and relative dB-below-golden-range from mgmt
+  (0 = ideal, ~3 s update period). Thresholds, `tau` and dwell times are configured per
+  scale; test with a synthetic trace shaped like the M1 walk (`0, -5, -11, -20, -24, -27,
+  ..., -8, 0` in ~3 s steps). Also covers the re-accept cool-down after a proximity drop.
 * Property-style tests with synthetic noisy RSSI traces (boundary jitter must not flap).
 
 **Done when:** tests prove no flapping on a jittery boundary trace and correct timing of
@@ -96,16 +130,23 @@ both transitions.
 
 ## M4: Bluetooth manager
 
-* `bluetooth/adapter.rs`: power on adapter, duty-cycled discovery, stream of device
-  property changes normalised to `BtEvent`.
+* `bluetooth/adapter.rs`: power on adapter, **set `Pairable = true`**, duty-cycled
+  discovery, stream of device property changes normalised to `BtEvent`.
 * `bluetooth/rssi.rs`: `RssiSource` trait, `DiscoveryRssi`, and `MgmtRssi` (per M1 result).
 * `bluetooth/device.rs`: connect, disconnect, trusted/paired checks, A2DP UUID check,
   `Connected` change events. Map BlueZ errors (`InProgress`, `AlreadyConnected`,
   `Failed`, ...) to a typed error.
-* Candidate filter (A2DP Sink UUID / audio Class of Device, plus `allow`/`deny`), as a pure
-  function with unit tests.
-* Presence detection for paired-but-not-discoverable devices (probe-connect), if M1 showed
-  it is needed.
+* `MgmtRssi` implemented on the raw mgmt socket (`Get Connection Information`), behind a
+  `CAP_NET_ADMIN` check with a clear warning and fallback. Unit-test the mgmt response
+  parsing; the live read is an `#[ignore]`d hardware test.
+* Candidate filter (A2DP Sink UUID / audio Class of Device **including the minor class**,
+  plus `allow`/`deny`), as a pure function with unit tests. Use the real classes from M1 as
+  fixtures: accept `0x200414`, `0x2c0414`, `0x240404`; reject TVs `0x0c043c`, `0x08043c`.
+* Presence for paired speakers: they reconnect on their own, so treat `Connected=true` as
+  arrival. Probe-connect (~5 s block) stays an optional, rate-limited fallback, not the
+  default.
+* Map `br-connection-key-missing` and `br-connection-page-timeout` (seen in M1) to typed
+  errors.
 * Dev CLI `list`: prints nearby and known audio candidates with smoothed RSSI and
   paired/connected status.
 
@@ -116,8 +157,9 @@ connected (if M1 found it feasible), and ignores non-audio devices.
 
 * `bluetooth/agent.rs`: `Agent1` implementation (SSP accept, configurable legacy PIN) that
   accepts only for candidates passing the filter and not on `deny`.
-* Pairing flow: pair, set `Trusted`, then hand over to the connect step. Honour
-  `auto_pair = false`.
+* Pairing flow: pair, set `Trusted`, verify **`Bonded`** (not just `Paired`), then hand over
+  to the connect step. On `br-connection-key-missing` remove the device and re-pair.
+  Honour `auto_pair = false`.
 * `forget <address>` subcommand to remove a paired speaker.
 
 **Done when:** a speaker put in pairing mode near the host is paired and trusted without
@@ -141,7 +183,11 @@ unlinks and disconnects, while the loop keeps playing.
 ## M7: Hardening
 
 * Handle `bluetoothd` or PipeWire restarts (reconnect to bus/daemon, rebuild state).
-* Multi-speaker soak test (2-3 speakers, hours), check for leaks and stuck states.
+* Multi-speaker soak test (2-3 speakers, hours), check for leaks and stuck states. Also
+  re-test what M1 could only check with one speaker: glitches while discovery runs, and
+  whether a probe-connect disturbs other active streams.
+* README/NixOS: document the `CAP_NET_ADMIN` route (`security.wrappers`, `setcap` on a copy
+  outside the Nix store) and the `Pairable` issue.
 * Logging review (state transitions at `info`, raw RSSI at `trace`), clear startup errors
   for missing permissions, absent adapter.
 * Docs: README with setup (`setcap`, auto-pairing behaviour and its security implications,
