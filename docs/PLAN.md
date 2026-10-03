@@ -25,7 +25,7 @@ starting the next one, do all of the following in the same commit as the milesto
 4. **Sync DESIGN.md.** If a finding changes a design decision (especially after the M1
    spikes), update DESIGN.md and note the change in its appendix.
 
-## M0: Project scaffold
+## M0: Project scaffold [DONE 2026-10-03]
 
 * `cargo init` in `bluetooth-audio-player`, add dependencies from DESIGN.md.
 * `tracing` setup, `clap` skeleton with subcommands `run`, `list`, `forget`.
@@ -35,6 +35,18 @@ starting the next one, do all of the following in the same commit as the milesto
 * CI-ish checks: `cargo fmt`, `cargo clippy`, `cargo nextest run`.
 
 **Done when:** `bt-roam-player list --help` works and config round-trips in tests.
+
+**Outcome / deviations:** Built as planned. Notes:
+* `toml` resolved to 1.x (DESIGN listed 0.9); `tracing-subscriber` needs the `env-filter`
+  feature (`-v/-vv` or `RUST_LOG`). `pipewire`, `symphonia` and `thiserror` are added but
+  unused until M2/M4, so `cargo clippy` warns about unused dependencies until then.
+* `config.rs` also exposes the discovery duty cycle (`[discovery]`), `pin`, and validation
+  (e.g. `disconnect_rssi < connect_rssi`); unknown keys are rejected. Config lookup order:
+  `--config`, `./config.toml`, `$XDG_CONFIG_HOME/bt-roam-player/config.toml`, defaults.
+* `allow`/`deny`/`[[device]].match` are plain strings for now; matching (address vs name
+  glob) is implemented in M4's candidate filter.
+* Subcommands `run`, `list`, `forget` parse arguments but bail with "not implemented yet".
+* Added `config.example.toml`.
 
 ## M1: Spikes (throwaway code, findings written back to DESIGN.md)
 

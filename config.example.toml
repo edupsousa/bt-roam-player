@@ -1,0 +1,27 @@
+# bt-roam-player configuration. Every key is optional; values shown are the defaults.
+# Copy to ./config.toml or ~/.config/bt-roam-player/config.toml.
+
+max_connected  = 3        # strongest speakers win when over the limit
+default_volume = 0.6      # applied to a speaker's sink when it appears (0.0..=1.0)
+auto_pair      = true     # false: only use already paired devices
+pin            = "0000"   # for legacy-PIN speakers
+allow = []                # if non-empty, only these (address or name pattern) are used
+deny  = []                # never used or paired
+
+[proximity]
+connect_rssi          = -68    # dBm, connect above this...
+connect_dwell_secs    = 2.0    # ...for at least this long
+disconnect_rssi       = -80    # dBm, disconnect below this...
+disconnect_dwell_secs = 5.0    # ...for at least this long
+ema_tau_secs          = 3.0
+stale_after_secs      = 30.0   # no sample for this long = out of range
+
+[discovery]
+on_secs  = 10.0
+off_secs = 20.0
+
+# Per-device overrides, matched by address or name.
+# [[device]]
+# match = "AA:BB:CC:DD:EE:FF"
+# connect_rssi = -75
+# volume = 0.4
