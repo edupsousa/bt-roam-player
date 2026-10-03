@@ -2,6 +2,7 @@ mod audio;
 mod bluetooth;
 mod config;
 mod list;
+mod pair;
 mod proximity;
 
 use std::path::PathBuf;
@@ -72,6 +73,12 @@ enum Command {
         #[arg(short, long)]
         all: bool,
     },
+    /// Dev tool (M5): run the pairing agent and pair every audio speaker in pairing mode
+    Pair {
+        /// Seconds to keep the agent running
+        #[arg(short, long, default_value_t = 120)]
+        seconds: u64,
+    },
     /// Remove a paired speaker
     Forget {
         /// Bluetooth address, e.g. AA:BB:CC:DD:EE:FF
@@ -114,9 +121,8 @@ async fn main() -> Result<()> {
             seconds,
         } => play(file, sinks, addresses, volume, ramp, unlink_after, seconds).await,
         Command::List { seconds, all } => list::list(&config, seconds, all).await,
-        Command::Forget { address } => {
-            bail!("`forget` is not implemented yet (M5); address: {address}")
-        }
+        Command::Pair { seconds } => pair::pair(&config, seconds).await,
+        Command::Forget { address } => pair::forget(&config, address).await,
     }
 }
 

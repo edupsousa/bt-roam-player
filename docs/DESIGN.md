@@ -182,6 +182,11 @@ proven need; re-check with 2-3 speakers in M7.
   adapter had `Pairable: no` (it happens intermittently on this system and also affected
   other devices, so something else seems to toggle it). Pair success must be judged by
   `Bonded`, not `Paired`; on `br-connection-key-missing`, `RemoveDevice` and re-pair.
+* **Implemented (M5):** bluer derives the agent capability from the callbacks set, so the
+  agent registers as `KeyboardDisplay` (pin, confirmation, authorization and service
+  callbacks, each vetted with the candidate filter). **Connect finding:** `Connect` failed
+  with `br-connection-page-timeout` when no discovery had recently seen the speaker and
+  worked while discovery ran, so connect right after a burst that saw it (M6).
 
 ### 4. Audio: one stream, fanned out to N sinks
 

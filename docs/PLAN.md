@@ -196,7 +196,7 @@ connected (if M1 found it feasible), and ignores non-audio devices.
   discovery timing beyond a 12 s run, `Removed` events, and the mgmt reading changing with
   distance (already seen in M1).
 
-## M5: Auto-pairing agent
+## M5: Auto-pairing agent [DONE 2026-10-03]
 
 * `bluetooth/agent.rs`: `Agent1` implementation (SSP accept, configurable legacy PIN) that
   accepts only for candidates passing the filter and not on `deny`.
@@ -208,6 +208,28 @@ connected (if M1 found it feasible), and ignores non-audio devices.
 **Done when:** a speaker put in pairing mode near the host is paired and trusted without
 interaction, a non-audio device in pairing mode is refused, and the speaker reconnects
 later.
+
+**Outcome / deviations:** Built as planned (`bluetooth/pairing.rs`, `src/pair.rs`, dev command
+`pair [-s SECS]`, real `forget`). Verified on hardware:
+* JBL forgotten, put in pairing mode: `pair` paired, trusted and bonded it with no
+  interaction, and the adapter had `Pairable: no` beforehand (the app turns it on at start and
+  again before each pairing). After connecting once and power-cycling, it reconnected by
+  itself. An MX Master 3S in pairing mode was ignored (`NotAudio`) and not paired; the TV and
+  watch were ignored too.
+* `Device1.Bonded` is read through the `dbus` crate (bluer lacks it). `Paired` without
+  `Bonded` removes the device and returns `NotBonded`; the caller pairs again once the device
+  is seen in pairing mode again. The agent capability is derived by bluer from the callbacks
+  we set, so it is `KeyboardDisplay` rather than `NoInputNoOutput`; all requests are vetted
+  with the candidate filter.
+* **Finding:** the first `pair` attempt failed once with a page timeout, and later
+  `connect()` calls failed with `br-connection-page-timeout` while discovery was off, even
+  though the speaker was on and in pairing mode. The same connect succeeded while discovery
+  was running. M6 should connect right after a discovery burst that has seen the speaker.
+  A speaker paired but never connected does not reconnect by itself after a power cycle;
+  after one connection it does.
+* Incoming request from a non-audio device: a phone paired to the laptop showed a key, and the
+  agent logged `confirmation: rejecting (NotAudio)`; the phone was not paired.
+* Not exercised: legacy-PIN speakers.
 
 ## M6: Speaker state machine and orchestrator
 

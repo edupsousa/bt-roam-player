@@ -7,4 +7,5 @@ pub mod adapter;
 pub mod candidate;
 pub mod device;
 pub mod mgmt;
+pub mod pairing;
 pub mod rssi;

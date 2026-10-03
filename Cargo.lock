@@ -144,6 +144,8 @@ dependencies = [
  "anyhow",
  "bluer",
  "clap",
+ "dbus",
+ "dbus-tokio",
  "futures",
  "libc",
  "libspa-sys",

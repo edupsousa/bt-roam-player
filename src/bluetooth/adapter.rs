@@ -67,6 +67,10 @@ impl Bluetooth {
         ))
     }
 
+    pub fn session(&self) -> &bluer::Session {
+        &self._session
+    }
+
     pub fn adapter(&self) -> &bluer::Adapter {
         &self.adapter
     }
