@@ -95,7 +95,7 @@ fan-out); `futures` and `libspa-sys` were added as dev-dependencies for them.
 
 **Downstream changes made after M1:** see the edits to M2-M7 below.
 
-## M2: Audio engine (no Bluetooth)
+## M2: Audio engine (no Bluetooth) [DONE 2026-10-03]
 
 * `audio/decode.rs`: symphonia decode to f32 PCM at the graph's sample rate; resample if
   needed.
@@ -114,6 +114,20 @@ fan-out); `futures` and `libspa-sys` were added as dev-dependencies for them.
 
 **Done when:** a file loops gaplessly and can be linked/unlinked to any sink live, with
 volume set.
+
+**Outcome / deviations:**
+* Implemented as planned, plus a `play` dev subcommand (`--sink`, `--address`, `--volume`,
+  `--ramp`, `--unlink-after`, `--seconds`). Verified on a null sink and on the JBL (by ear:
+  clean loop, no click, fade-in, silence on unlink). 22 unit tests.
+* **No resampler**: the clip stays at its native rate; PipeWire resamples per sink.
+* `Link` is persistent intent: it links when the sink (and all four ports) exist and
+  re-links if the sink returns, until `Unlink`. Added `Linked`/`Unlinked` events.
+* **Volume goes through the device `Route`, not node `Props`** (see DESIGN decision 5 and
+  row 18): on a BT sink the node write multiplies with WirePlumber's restored route volume.
+  Linking waits for the first volume write to avoid a click.
+* Registry globals lack `api.bluez5.address`; the address is parsed from the node name.
+* **Not verified**: sink disappearing and returning while wanted (needs a power cycle; do
+  in M6/M7 with the real manager), multi-speaker behaviour, `cargo miri` (FFI-heavy).
 
 ## M3: Proximity logic (pure code)
 

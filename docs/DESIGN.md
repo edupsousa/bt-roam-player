@@ -221,8 +221,13 @@ when over the limit.
 ### 5. Volume normalization
 
 * When a speaker's sink node appears, set its volume to the configured level (default 60%)
-  by writing the node's `Props` (`channelVolumes`/`volume`) through the PipeWire node
-  proxy.
+  by writing the **device's output `Route`** (`channelVolumes`, `save=false`) through the
+  PipeWire device proxy, i.e. what `wpctl set-volume` does. Writing the *node's* `Props`
+  is a separate, multiplicative stage on Bluetooth sinks: the restored route volume still
+  applies on top, so a node-only write is far too quiet and `wpctl` does not reflect it
+  (M2 finding). Non-Bluetooth sinks have no route and get the node `Props` write. The
+  route's `index`/`device` are learned from the device's `Route` params, and the node is
+  kept at 1.0. Values are perceptual (cubic, like `wpctl`).
 * WirePlumber may restore a previously saved volume shortly after the node appears. Apply
   the volume **after** the node reaches the `idle`/`running` state, and re-assert once if
   the value is changed within the first ~1 s. Verify during the spike.
@@ -230,8 +235,10 @@ when over the limit.
   (observed 0.66, 0.39, 0.13 on successive connections), and an explicit write immediately
   after the sink appeared stuck for the 5 s observed, both during playback and just after
   reconnect. No override was seen, so the "re-assert once after ~1 s" step stays as a cheap
-  safeguard, not a proven need. (Tested via `wpctl set-volume`, not yet via node `Props`.)
-* Optionally ramp from 0 to target over ~500 ms to avoid a click.
+  safeguard, not a proven need. (M2 confirmed the route write holds and is visible in `wpctl`.)
+* Ramp from 0 to target (default ~500 ms). The link is created only after the first volume
+  write, because otherwise the stream opens at the speaker's restored volume and clicks
+  (heard on the JBL; with the ordering fixed, no click).
 * Volume is applied to the sink node, so it also affects other apps using that speaker.
   Applying it to the link or a per-link volume stage is an alternative to evaluate.
 
@@ -310,7 +317,7 @@ src/
     ├── decode.rs        # symphonia: file -> looped f32 PCM
     ├── stream.rs        # PipeWire playback stream + process callback
     ├── graph.rs         # registry watcher, link create/destroy, address -> node map
-    └── volume.rs        # node Props volume control
+    └── volume.rs        # device Route (BT) / node Props volume, ramps
 ```
 
 `proximity.rs` and `speaker.rs` are deliberately free of I/O so the core logic can be
@@ -378,3 +385,6 @@ RSSI reader will need a small amount of raw socket code (`libc`/`nix`).
 | 15 | M1: `Pairable: no` makes pairing succeed without bonding | App sets `Pairable = true`; judge success by `Bonded`; re-pair on `br-connection-key-missing` |
 | 16 | M1: paired speakers reconnect on their own and have no pre-connection RSSI | Proximity governs disconnect plus a re-accept cool-down; probes are a rate-limited fallback (~5 s page timeout) |
 | 17 | M1: fan-out, volume and discovery-during-streaming confirmed with one speaker | No design change; multi-speaker checks moved to M6/M7 |
+| 18 | M2: node `Props` volume is multiplicative with the BT device route volume | Volume is written to the device `Route` (as `wpctl` does); link only after the first volume write |
+| 19 | M2: registry node globals omit `api.bluez5.address` | Address parsed from `bluez_output.<MAC>.N` node name |
+| 20 | M2: resampling not needed | Clip kept at native rate, PipeWire resamples per sink |
