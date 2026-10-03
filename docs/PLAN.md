@@ -231,7 +231,7 @@ later.
   agent logged `confirmation: rejecting (NotAudio)`; the phone was not paired.
 * Not exercised: legacy-PIN speakers.
 
-## M6: Speaker state machine and orchestrator
+## M6: Speaker state machine and orchestrator [DONE 2026-10-03]
 
 * `speaker.rs`: states and transitions from DESIGN.md as a pure function
   `(State, Event, Instant) -> (State, Vec<Action>)`. Table-driven tests for every
@@ -245,8 +245,37 @@ later.
 **Done when:** walking toward/away from a real speaker connects, links, sets volume, then
 unlinks and disconnects, while the loop keeps playing.
 
+**Outcome / deviations:** `speaker.rs` is a `Machine` with `handle(Event, now) -> Vec<Action>`
+(31 table-driven tests: pairing, backoff 2 s to 60 s, awaiting-sink timeout, external
+disconnects, sink vanishing and returning, release in every state). Proximity and
+`max_connected` are decided outside it: the orchestrator sends `Want(bool)`.
+`orchestrator.rs` is one task owning a map of speakers, not one actor each; slow calls (pair,
+connect, disconnect, link RSSI) are spawned and report back. `run` is wired, with SIGINT/SIGTERM shutdown (unlink, 0.7 s fade, disconnect what we hold).
+* Per speaker two trackers: discovery dBm while not connected, mgmt link dB while connected
+  (switched on `Connected`; a speaker we connected starts `Near`, one that connected by itself
+  must prove it). Per-device `connect_rssi`/`disconnect_rssi`/`volume` overrides are applied.
+  Without `CAP_NET_ADMIN` there is no link RSSI: connected speakers are never released by
+  proximity, and self-connected ones are adopted unchecked (warned once).
+* `Connect` waits (up to 40 s) for the discovery duty cycle to be on (M5 finding).
+* `max_connected` deviation: nearest-first admission, but no pre-emption. A full set is not
+  swapped for a stronger newcomer, because dBm and link dB are not comparable. Left for M7.
+* **Engine bug found on hardware and fixed:** after a speaker reconnected, its device Route
+  never arrived, so the engine waited for the first volume write forever and never linked
+  (silence). Fix: re-request the Route every 0.5 s, link anyway after 2 s, and drop stale
+  device proxies on removal.
+* Verified on the JBL (`run`, under sudo with `XDG_RUNTIME_DIR` and `LD_LIBRARY_PATH` kept):
+  adopted a self-connected speaker, linked at 60 %, walking away released it (unlink,
+  disconnect, loop keeps playing), coming back it reconnected by itself (about 50 s after our
+  disconnect) and was re-linked within 2 s; power-cycle handled as an external drop.
+* Not exercised on hardware: `Connect` issued by `run`, pairing inside `run`, more than one
+  speaker, `max_connected`. A speaker that reconnects by itself right after an external drop
+  is re-adopted without the dBm cool-down (the cool-down only covers the dBm tracker).
+
 ## M7: Hardening
 
+* From M6: test `Connect` and pairing from `run`; multi-speaker and `max_connected`
+  (decide pre-emption); a far, self-connected speaker is never released if it never proves
+  near (it just stays connected, unlinked); put the `run` privileges (setcap) in the README.
 * Handle `bluetoothd` or PipeWire restarts (reconnect to bus/daemon, rebuild state).
 * Multi-speaker soak test (2-3 speakers, hours), check for leaks and stuck states. Also
   re-test what M1 could only check with one speaker: glitches while discovery runs, and

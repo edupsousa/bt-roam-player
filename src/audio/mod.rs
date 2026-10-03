@@ -40,6 +40,11 @@ use volume::{Ramp, Route};
 
 const TICK: Duration = Duration::from_millis(20);
 /// WirePlumber may restore a saved volume shortly after a sink appears; write once more.
+/// Link without waiting any longer for a volume write that cannot happen yet (the device
+/// route never arrived): silence is worse than a possible click.
+const LINK_WITHOUT_VOLUME_AFTER: Duration = Duration::from_secs(2);
+/// Minimum time between requests for a device's route.
+const ROUTE_RETRY: Duration = Duration::from_millis(500);
 const REASSERT_DELAY: Duration = Duration::from_secs(1);
 
 #[derive(Debug)]
@@ -147,6 +152,8 @@ fn run(
         current: HashMap::new(),
         ramps: HashMap::new(),
         reasserts: HashMap::new(),
+        appeared: HashMap::new(),
+        route_asked: HashMap::new(),
         events,
     }));
 
@@ -199,6 +206,10 @@ struct Engine {
     current: HashMap<u32, f32>,
     ramps: HashMap<u32, Ramp>,
     reasserts: HashMap<u32, Instant>,
+    /// When each sink node appeared.
+    appeared: HashMap<u32, Instant>,
+    /// Last time we asked each device for its route.
+    route_asked: HashMap<u32, Instant>,
     events: UnboundedSender<AudioEvent>,
 }
 
@@ -219,6 +230,7 @@ impl Engine {
                         Err(e) => tracing::warn!("cannot bind sink {}: {e}", info.name),
                     }
                     tracing::debug!("sink appeared: {} ({})", info.name, global.id);
+                    self.appeared.insert(global.id, Instant::now());
                     self.emit(AudioEvent::SinkAppeared(info.clone()));
                     let wanted = self
                         .volumes
@@ -233,6 +245,7 @@ impl Engine {
             ObjectType::Device if props.get("device.api") == Some("bluez5") => {
                 match self.registry.bind::<Device, _>(global) {
                     Ok(device) => {
+                        tracing::debug!("bluez device {} bound", global.id);
                         let route = Rc::new(Cell::new(None));
                         let r = route.clone();
                         let listener = device
@@ -263,6 +276,10 @@ impl Engine {
     }
 
     fn on_remove(&mut self, id: u32) {
+        if self.devices.remove(&id).is_some() {
+            tracing::debug!("bluez device {id} removed");
+            self.route_asked.remove(&id);
+        }
         if let Removed::Sink(info) = self.graph.remove(id) {
             if self.links.remove(&id).is_some() {
                 self.emit(AudioEvent::Unlinked(info.clone()));
@@ -270,6 +287,7 @@ impl Engine {
             self.nodes.remove(&id);
             self.current.remove(&id);
             self.ramps.remove(&id);
+            self.appeared.remove(&id);
             self.reasserts.remove(&id);
             tracing::debug!("sink removed: {} ({id})", info.name);
             self.emit(AudioEvent::SinkRemoved(info));
@@ -310,7 +328,12 @@ impl Engine {
             // If a volume was requested, let it land first so the stream never opens at the
             // speaker's restored volume (audible as a click).
             .filter(|s| {
-                self.current.contains_key(&s.node_id) || !self.volumes.keys().any(|r| s.matches(r))
+                self.current.contains_key(&s.node_id)
+                    || !self.volumes.keys().any(|r| s.matches(r))
+                    || self
+                        .appeared
+                        .get(&s.node_id)
+                        .is_some_and(|t| t.elapsed() >= LINK_WITHOUT_VOLUME_AFTER)
             })
             .filter_map(|s| Some((s.clone(), self.graph.link_specs(s.node_id)?)))
             .collect();
@@ -362,11 +385,9 @@ impl Engine {
 
     /// Write a volume; returns false if the sink is not ready to take it yet.
     fn write_volume(&mut self, id: u32, v: f32) -> bool {
-        let device = self
-            .graph
-            .sink(id)
-            .and_then(|s| s.device_id)
-            .and_then(|d| self.devices.get(&d));
+        let dev_id = self.graph.sink(id).and_then(|s| s.device_id);
+        let device = dev_id.and_then(|d| self.devices.get(&d));
+        let mut ask = None;
         let ok = match device {
             // Bluetooth: set the device route (what `wpctl` does) and leave the node at 1.0.
             Some(dev) => match dev.route.get() {
@@ -379,14 +400,39 @@ impl Engine {
                     }
                     true
                 }
-                None => false,
+                None => {
+                    ask = dev_id;
+                    false
+                }
             },
             None => self.write_node_volume(id, v),
         };
+        if let Some(d) = ask {
+            self.request_route(d);
+        }
         if ok {
             self.current.insert(id, v);
         }
         ok
+    }
+
+    /// Ask a device for its Route params again; the subscription alone has been seen to
+    /// deliver nothing for a device that came back after a reconnect.
+    fn request_route(&mut self, device_id: u32) {
+        let now = Instant::now();
+        if self
+            .route_asked
+            .get(&device_id)
+            .is_some_and(|t| now.duration_since(*t) < ROUTE_RETRY)
+        {
+            return;
+        }
+        self.route_asked.insert(device_id, now);
+        if let Some(dev) = self.devices.get(&device_id) {
+            tracing::debug!("asking device {device_id} for its route");
+            dev.device
+                .enum_params(0, Some(ParamType::Route), 0, u32::MAX);
+        }
     }
 
     fn write_node_volume(&self, id: u32, v: f32) -> bool {

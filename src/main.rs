@@ -2,12 +2,14 @@ mod audio;
 mod bluetooth;
 mod config;
 mod list;
+mod orchestrator;
 mod pair;
 mod proximity;
+mod speaker;
 
 use std::path::PathBuf;
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 use bluer::Address;
 use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
@@ -107,10 +109,7 @@ async fn main() -> Result<()> {
     tracing::debug!(?config, "configuration loaded");
 
     match cli.command {
-        Command::Run { file } => bail!(
-            "`run` is not implemented yet (M6); file: {}",
-            file.display()
-        ),
+        Command::Run { file } => orchestrator::run(config, &file).await,
         Command::Play {
             file,
             sinks,

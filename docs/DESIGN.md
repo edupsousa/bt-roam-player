@@ -302,6 +302,11 @@ Notes:
 * Transitions to `Linked` require **both** `Device1.Connected` and the PipeWire sink node
   being present; the profile must be A2DP sink (UUID `0000110b-...`), not HFP.
 * `Disconnecting` removes the link first (audio fades out), then calls `Disconnect`.
+* **Implemented in M6** (`speaker.rs`, `orchestrator.rs`): the machine is pure and takes a
+  `Want(bool)` from the orchestrator, which owns the proximity trackers (dBm while
+  unconnected, link dB while connected) and admission. `Connect` waits for a discovery window.
+  A sink that vanishes while linked returns to `AwaitingSink`; the audio engine re-requests
+  the device Route and links after 2 s even if the volume write has not landed.
 
 ---
 
