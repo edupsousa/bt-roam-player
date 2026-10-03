@@ -87,6 +87,7 @@ pub async fn list(config: &Config, seconds: u64, all: bool) -> Result<()> {
                     }
                 }
                 BtEvent::Removed(address) => { rows.remove(&address); }
+                BtEvent::Lost => break,
             },
         }
     }

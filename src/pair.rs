@@ -38,6 +38,7 @@ pub async fn pair(config: &Config, seconds: u64) -> Result<()> {
                         s.clone()
                     }
                     BtEvent::Removed(address) => { known.remove(&address); continue }
+                    BtEvent::Lost => break,
                 };
                 if s.paired || s.rssi.is_none() {
                     continue;

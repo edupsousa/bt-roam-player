@@ -271,21 +271,32 @@ connect, disconnect, link RSSI) are spawned and report back. `run` is wired, wit
   speaker, `max_connected`. A speaker that reconnects by itself right after an external drop
   is re-adopted without the dBm cool-down (the cool-down only covers the dBm tracker).
 
-## M7: Hardening
+## M7: Hardening [IN PROGRESS]
 
-* From M6: test `Connect` and pairing from `run`; multi-speaker and `max_connected`
-  (decide pre-emption); a far, self-connected speaker is never released if it never proves
-  near (it just stays connected, unlinked); put the `run` privileges (setcap) in the README.
-* Handle `bluetoothd` or PipeWire restarts (reconnect to bus/daemon, rebuild state).
+* Handle `bluetoothd` or PipeWire restarts. **Done:** the process exits non-zero (see below).
 * Multi-speaker soak test (2-3 speakers, hours), check for leaks and stuck states. Also
   re-test what M1 could only check with one speaker: glitches while discovery runs, and
-  whether a probe-connect disturbs other active streams.
-* README/NixOS: document the `CAP_NET_ADMIN` route (`security.wrappers`, `setcap` on a copy
-  outside the Nix store) and the `Pairable` issue.
-* Logging review (state transitions at `info`, raw RSSI at `trace`), clear startup errors
-  for missing permissions, absent adapter.
-* Docs: README with setup (`setcap`, auto-pairing behaviour and its security implications,
-  config example), systemd user unit.
+  whether a probe-connect disturbs other active streams. **Open.**
+* README/NixOS: `CAP_NET_ADMIN` route and the `Pairable` issue. **Done** (`README.md`).
+* Logging review, clear startup errors. **Done.**
+* Docs: README, systemd user unit. **Done** (`README.md`, `contrib/bt-roam-player.service`).
+
+**Outcome so far:**
+* bluetoothd or PipeWire going away (tested with `systemctl restart bluetooth` and `systemctl
+  --user restart pipewire` during `run`): the player logs an error, unlinks and exits non-zero;
+  a supervisor (`Restart=on-failure`) restarts it with fresh state. No in-process reconnect.
+* **Gap found and fixed (probe-connect):** a paired speaker that is on but disconnected is not in
+  discovery results, so it never got an RSSI and was never connected. Now probed with a connect
+  after 45 s without RSSI (one at a time, every 30 s at most, only with a free slot); link RSSI
+  gets 15 s to confirm it is near, else it is released and left for 60 s. Verified on the JBL.
+* **Pairing from `run` verified** (JBL, then XKL-Q5): pairs in about 5 s once discovery is on.
+  `Connect`/`Pair` now hold their own discovery session (the duty-cycle window was ending
+  mid-attempt, giving page timeouts). Both speakers dropped the link a few seconds after
+  pairing, so a drop within 60 s of pairing is retried after 3 s (was about 60 s).
+* **Multi-speaker verified** (JBL + XKL-Q5): both paired, connected and played within 15 s
+  with `max_connected = 3`; with `max_connected = 1` only the JBL played and the other waited
+  for a free slot. No pre-emption (dBm and link dB cannot be compared); still open as an idea.
+* Raw RSSI is logged at `trace`, state transitions at `info`.
 
 ## Later / out of scope for v1
 

@@ -31,9 +31,15 @@ const LINK_POLL: Duration = Duration::from_secs(3);
 const RAMP: Duration = Duration::from_millis(500);
 /// A speaker that is not connected and was not heard for this long is forgotten.
 const FORGET_AFTER: Duration = Duration::from_secs(600);
-/// `Connect` works only while discovery is running (DESIGN.md decision 3); wait at most
-/// this long for the next discovery window.
-const DISCOVERY_WAIT: Duration = Duration::from_secs(40);
+/// A paired speaker that is on but disconnected gives no discovery RSSI, so with none for this
+/// long it is probed: connected, then judged by its link RSSI.
+const PROBE_AFTER: Duration = Duration::from_secs(45);
+/// Minimum time between probes of one speaker.
+const PROBE_INTERVAL: Duration = Duration::from_secs(30);
+/// A drop within this long of pairing is not taken as the user turning the speaker off.
+const FRESH_PAIR: Duration = Duration::from_secs(60);
+/// A probed speaker has this long to show a near link before it is released again.
+const PROBE_GRACE: Duration = Duration::from_secs(15);
 
 /// Results of the spawned Bluetooth calls.
 enum Done {
@@ -53,6 +59,16 @@ struct Entry {
     was_connected: bool,
     /// We told the machine to want this speaker.
     granted: bool,
+    /// Connected on a hunch (no RSSI to go on); the link RSSI has to confirm it is near.
+    probing: bool,
+    probe_until: Timestamp,
+    next_probe: Timestamp,
+    /// When we last paired it. Speakers often drop the link right after pairing.
+    paired_at: Option<Timestamp>,
+    /// Already logged that it is waiting for a free slot.
+    blocked: bool,
+    /// Last time a discovery RSSI arrived.
+    last_rssi: Option<Timestamp>,
     link_poll_inflight: bool,
     last_seen: Instant,
 }
@@ -62,7 +78,14 @@ impl Entry {
         self.snapshot.name.as_deref().unwrap_or("?")
     }
 
-    fn near(&self) -> bool {
+    fn near(&self, now: Timestamp) -> bool {
+        if self.probing {
+            return if self.machine.is_connected() {
+                self.link.state() == Prox::Near || now < self.probe_until
+            } else {
+                self.machine.is_engaged()
+            };
+        }
         let tracker = if self.machine.is_connected() {
             &self.link
         } else {
@@ -79,18 +102,34 @@ impl Entry {
         }
         self.was_connected = connected;
         if connected {
+            if self.probing {
+                self.probe_until = now + PROBE_GRACE;
+            }
             // A speaker we connected is near by definition; one that connected on its own
             // has to prove it. Without link RSSI there is nothing to prove it with.
-            let start = if self.granted || !link_rssi {
+            let start = if (self.granted && !self.probing) || !link_rssi {
                 Prox::Near
             } else {
                 Prox::Far
             };
             self.link.reset(start);
         } else {
-            // Discovery RSSI is a different scale: start over, and do not bounce straight
-            // back in.
-            self.dbm.reset(Prox::Far);
+            self.dropped(now);
+        }
+    }
+
+    /// The link ended. Discovery RSSI is a different scale: start over, and do not bounce
+    /// straight back in, unless the speaker has only just been paired (it tends to drop the
+    /// link by itself then; reconnect soon instead).
+    fn dropped(&mut self, now: Timestamp) {
+        self.dbm.reset(Prox::Far);
+        if self
+            .paired_at
+            .is_some_and(|t| now.saturating_sub(t) < FRESH_PAIR)
+        {
+            self.next_probe = now + Duration::from_secs(3);
+            self.last_rssi = None;
+        } else {
             self.dbm.start_cooldown(now);
         }
     }
@@ -153,20 +192,40 @@ pub async fn run(config: Config, file: &Path) -> Result<()> {
     let mut poll = tokio::time::interval(LINK_POLL);
     let mut sigterm = signal(SignalKind::terminate())?;
     tracing::info!("running; Ctrl-C to stop");
+    let mut failure = None;
     loop {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => break,
             _ = sigterm.recv() => break,
             _ = tick.tick() => o.on_tick(),
             _ = poll.tick() => o.poll_links(),
-            Some(ev) = bt_events.recv() => o.on_bluetooth(ev),
-            Some(ev) = audio_events.recv() => o.on_audio(ev),
+            ev = bt_events.recv() => match ev {
+                Some(BtEvent::Lost) | None => {
+                    failure = Some("lost bluetoothd");
+                    break;
+                }
+                Some(ev) => o.on_bluetooth(ev),
+            },
+            ev = audio_events.recv() => match ev {
+                Some(ev) => o.on_audio(ev),
+                None => {
+                    failure = Some("lost PipeWire");
+                    break;
+                }
+            },
             Some(done) = done_rx.recv() => o.on_done(done),
         }
         o.reconcile();
     }
     o.shutdown().await;
-    Ok(())
+    match failure {
+        // A non-zero exit lets a supervisor (systemd Restart=on-failure) start from scratch,
+        // which rebuilds all state once the daemon is back.
+        Some(what) => Err(anyhow::anyhow!(
+            "{what}; exiting so that a supervisor can restart us"
+        )),
+        None => Ok(()),
+    }
 }
 
 impl Orchestrator {
@@ -201,6 +260,7 @@ impl Orchestrator {
                     && let Some(rssi) = snapshot.rssi
                 {
                     entry.dbm.sample(now, f64::from(rssi));
+                    entry.last_rssi = Some(now);
                 }
                 let (paired, connected) = (snapshot.paired, snapshot.connected);
                 entry.snapshot = snapshot;
@@ -208,11 +268,13 @@ impl Orchestrator {
                 self.step(address, Event::Connected(connected));
             }
             BtEvent::Rssi { address, dbm } => {
+                tracing::trace!(%address, dbm, "rssi");
                 if let Some(entry) = self.entries.get_mut(&address) {
                     entry.last_seen = Instant::now();
                     entry.snapshot.rssi = Some(dbm);
                     if !entry.machine.is_connected() {
                         entry.dbm.sample(now, f64::from(dbm));
+                        entry.last_rssi = Some(now);
                     }
                 }
             }
@@ -220,6 +282,7 @@ impl Orchestrator {
                 self.step(address, Event::Gone);
                 self.entries.remove(&address);
             }
+            BtEvent::Lost => {}
         }
     }
 
@@ -239,6 +302,12 @@ impl Orchestrator {
             link: Tracker::new(Params::mgmt(&self.config.proximity), Prox::Far),
             was_connected: false,
             granted: false,
+            probing: false,
+            probe_until: Timestamp::ZERO,
+            next_probe: Timestamp::ZERO,
+            paired_at: None,
+            blocked: false,
+            last_rssi: None,
             link_poll_inflight: false,
             last_seen: Instant::now(),
             snapshot,
@@ -278,7 +347,12 @@ impl Orchestrator {
     fn on_done(&mut self, done: Done) {
         let now = self.now();
         match done {
-            Done::Pair(a, ok) => self.step(a, Event::PairResult(ok)),
+            Done::Pair(a, ok) => {
+                if let (true, Some(e)) = (ok, self.entries.get_mut(&a)) {
+                    e.paired_at = Some(now);
+                }
+                self.step(a, Event::PairResult(ok));
+            }
             Done::Connect(a, ok) => self.step(a, Event::ConnectResult(ok)),
             Done::Disconnect(a, ok) => self.step(a, Event::DisconnectResult(ok)),
             Done::Link(a, value) => {
@@ -309,6 +383,7 @@ impl Orchestrator {
         for a in addresses {
             self.step(a, Event::Tick);
         }
+        self.start_probes(now);
         // Forget speakers that were not heard from for a long time.
         let stale: Vec<Address> = self
             .entries
@@ -321,6 +396,41 @@ impl Orchestrator {
             self.step(a, Event::Gone);
             self.entries.remove(&a);
         }
+    }
+
+    /// Connect to paired, idle speakers that give no discovery RSSI, one by one while slots
+    /// are free; the link RSSI then confirms or releases them.
+    fn start_probes(&mut self, now: Timestamp) {
+        for e in self.entries.values_mut() {
+            if e.probing && e.machine.is_connected() && e.link.state() == Prox::Near {
+                tracing::info!(name = e.name(), "probe confirmed: speaker is near");
+                e.probing = false;
+            }
+        }
+        if self.entries.values().any(|e| e.probing) {
+            return;
+        }
+        let granted = self.entries.values().filter(|e| e.granted).count();
+        if granted >= self.config.max_connected {
+            return;
+        }
+        let due = self.entries.iter().find(|(_, e)| {
+            e.snapshot.paired
+                && !e.granted
+                && !e.machine.is_connected()
+                && e.machine.state() == crate::speaker::State::InRange
+                && e.next_probe <= now
+                && !e.dbm.cooling_down(now)
+                && e.last_rssi
+                    .is_none_or(|t| now.saturating_sub(t) > PROBE_AFTER)
+        });
+        let Some((&address, _)) = due else { return };
+        let e = self.entries.get_mut(&address).expect("just found");
+        tracing::info!(%address, name = e.name(), "no discovery RSSI: probing with a connect");
+        e.probing = true;
+        e.granted = true;
+        e.next_probe = now + PROBE_INTERVAL;
+        self.step(address, Event::Want(true));
     }
 
     fn poll_links(&mut self) {
@@ -343,10 +453,16 @@ impl Orchestrator {
     /// Decide which speakers we want: every near one, strongest first, up to
     /// `max_connected`. Speakers we already hold keep their slot while they stay near.
     fn reconcile(&mut self) {
+        let now = self.now();
         let mut changes: Vec<(Address, bool)> = Vec::new();
         for (&a, e) in self.entries.iter_mut() {
-            if e.granted && !e.near() {
+            if e.granted && !e.near(now) {
                 e.granted = false;
+                if e.probing {
+                    // Did not pan out; try again later, not right away.
+                    e.probing = false;
+                    e.next_probe = now + PROBE_INTERVAL * 2;
+                }
                 changes.push((a, false));
             }
         }
@@ -357,18 +473,24 @@ impl Orchestrator {
         let mut candidates: Vec<(Address, f64)> = self
             .entries
             .iter()
-            .filter(|(_, e)| !e.granted && e.near())
+            .filter(|(_, e)| !e.granted && e.near(now))
             .map(|(&a, e)| (a, e.dbm.smoothed().unwrap_or(f64::MIN)))
             .collect();
         candidates.sort_by(|x, y| y.1.total_cmp(&x.1));
         for (a, _) in candidates {
             if free == 0 {
-                tracing::debug!(address = %a, "near, but max_connected is reached");
-                break;
+                if let Some(e) = self.entries.get_mut(&a)
+                    && !e.blocked
+                {
+                    e.blocked = true;
+                    tracing::info!(address = %a, name = e.name(), "near, waiting for a free slot (max_connected)");
+                }
+                continue;
             }
             free -= 1;
             if let Some(e) = self.entries.get_mut(&a) {
                 e.granted = true;
+                e.blocked = false;
             }
             changes.push((a, true));
         }
@@ -393,8 +515,7 @@ impl Orchestrator {
         }
         entry.sync_connected(now, link_rssi);
         if actions.contains(&Action::ExternalDrop) {
-            entry.dbm.reset(Prox::Far);
-            entry.dbm.start_cooldown(now);
+            entry.dropped(now);
         }
         for action in actions {
             tracing::debug!(%address, ?action);
@@ -417,6 +538,7 @@ impl Orchestrator {
             Action::Pair => {
                 let pairing = self.pairing.clone();
                 tokio::spawn(async move {
+                    let _discovery = hold_discovery(&adapter).await;
                     let result = pairing.ensure_paired(address).await;
                     if let Err(e) = &result {
                         tracing::warn!(%address, "pairing failed: {e}");
@@ -482,19 +604,22 @@ impl Orchestrator {
     }
 }
 
-/// `Connect` fails with a page timeout unless discovery is running (found in M5), so wait
-/// for the discovery duty cycle to be on.
+/// Hold a discovery session while we page the speaker: `Connect` and `Pair` fail with a page
+/// timeout unless discovery is running (found in M5), and the duty cycle may switch it off
+/// mid-attempt. BlueZ keeps scanning while any client holds a session.
+async fn hold_discovery(adapter: &bluer::Adapter) -> Option<impl Sized + use<>> {
+    adapter
+        .discover_devices()
+        .await
+        .inspect_err(|e| tracing::debug!("holding discovery: {e}"))
+        .ok()
+}
+
 async fn connect_during_discovery(adapter: &bluer::Adapter, address: Address) -> bool {
     let Ok(device) = adapter.device(address) else {
         return false;
     };
-    let started = Instant::now();
-    while !adapter.is_discovering().await.unwrap_or(false) {
-        if started.elapsed() > DISCOVERY_WAIT {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(200)).await;
-    }
+    let _discovery = hold_discovery(adapter).await;
     match connect(&device).await {
         Ok(()) => true,
         Err(e) => {

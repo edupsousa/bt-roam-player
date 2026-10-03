@@ -1,0 +1,19 @@
+# systemd user unit: ~/.config/systemd/user/bt-roam-player.service
+#   systemctl --user daemon-reload && systemctl --user enable --now bt-roam-player
+#
+# ExecStart must point at a copy of the binary that has CAP_NET_ADMIN (see README.md,
+# "Link RSSI permission"); without it speakers are never released when you walk away.
+[Unit]
+Description=Play one looping file to every nearby Bluetooth speaker
+After=pipewire.service wireplumber.service bluetooth.target
+Wants=pipewire.service
+
+[Service]
+ExecStart=%h/.local/bin/bt-roam-player run --file %h/Music/loop.flac
+# We exit non-zero when bluetoothd or PipeWire goes away; start again with fresh state.
+Restart=on-failure
+RestartSec=5
+Environment=RUST_LOG=info
+
+[Install]
+WantedBy=default.target

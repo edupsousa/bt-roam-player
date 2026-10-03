@@ -21,6 +21,8 @@ pub enum BtEvent {
     Rssi { address: Address, dbm: i16 },
     /// BlueZ forgot the device (not seen for a while and not paired).
     Removed(Address),
+    /// The adapter event stream ended: bluetoothd went away.
+    Lost,
 }
 
 /// Owns the background tasks; they stop when this is dropped.
@@ -143,6 +145,8 @@ async fn watch_devices(
             AdapterEvent::PropertyChanged(_) => {}
         }
     }
+    tracing::error!("lost the BlueZ event stream (did bluetoothd stop?)");
+    let _ = tx.send(BtEvent::Lost);
 }
 
 async fn watch_device(

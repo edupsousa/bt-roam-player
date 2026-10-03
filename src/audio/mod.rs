@@ -140,8 +140,20 @@ fn run(
         }
     };
 
+    // If PipeWire goes away, stop; the dropped event channel tells the orchestrator.
+    let ml_err = mainloop.clone();
+    let _core_listener = core
+        .add_listener_local()
+        .error(move |id, _seq, res, message| {
+            if id == 0 && res == -libc::EPIPE {
+                tracing::error!("lost the PipeWire connection: {message}");
+                ml_err.quit();
+            }
+        })
+        .register();
+
     let engine = Rc::new(RefCell::new(Engine {
-        core,
+        core: core.clone(),
         registry: registry.clone(),
         graph: Graph::default(),
         wanted: HashSet::new(),
