@@ -1,0 +1,23 @@
+# Rust / Cargo build output
+/target/
+
+# Local config that may contain device addresses (keep config.example.toml tracked)
+/config.toml
+
+# Nix / direnv
+/result
+/result-*
+.direnv/
+
+# Profiling / coverage artifacts
+flamegraph.svg
+perf.data*
+*.profraw
+/lcov.info
+/coverage/
+
+# Editors / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
