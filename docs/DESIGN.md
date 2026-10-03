@@ -142,6 +142,9 @@ target speakers, since it varies by controller and speaker.
   thresholds are separate and expressed in dB below the golden range (provisional defaults:
   re-accept above `-10`, disconnect below `-25`), and the dwell/EMA times must account for
   the ~3 s update period (`tau` >= 5 s, disconnect dwell >= 6 s).
+  **Implemented (M3):** `src/proximity.rs` with `Params::dbm`/`Params::mgmt`; mgmt defaults are
+  `[proximity.mgmt]` `connect_db -10`, `disconnect_db -25`, dwells 3 s / 6 s, tau 5 s, plus a
+  shared `cooldown_secs = 30` that starts whenever a speaker is dropped as too far.
 
 Discovery also has a cost: inquiry on classic radios competes with active A2DP streams and
 can cause audio glitches. Run discovery in **duty-cycled bursts** (e.g. 10 s on / 20 s off,

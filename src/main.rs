@@ -1,5 +1,6 @@
 mod audio;
 mod config;
+mod proximity;
 
 use std::path::PathBuf;
 

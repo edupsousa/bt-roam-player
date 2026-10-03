@@ -129,7 +129,7 @@ volume set.
 * **Not verified**: sink disappearing and returning while wanted (needs a power cycle; do
   in M6/M7 with the real manager), multi-speaker behaviour, `cargo miri` (FFI-heavy).
 
-## M3: Proximity logic (pure code)
+## M3: Proximity logic (pure code) [DONE 2026-10-03]
 
 * `proximity.rs`: time-based EMA, hysteresis with connect/disconnect dwell, stale-sample
   timeout. Driven by explicit timestamps, no I/O.
@@ -141,6 +141,19 @@ volume set.
 
 **Done when:** tests prove no flapping on a jittery boundary trace and correct timing of
 both transitions.
+
+**Outcome / deviations:** Built as planned, 17 unit tests in `src/proximity.rs`, no hardware.
+* One `Tracker` per speaker and scale (higher = closer), driven by `sample(now, v)` and
+  `tick(now)` with caller-supplied `Duration` timestamps. `Params::dbm` and `Params::mgmt`
+  build the two parameter sets from config; the owner picks the tracker by RSSI source.
+* Config grew `proximity.cooldown_secs` (default 30) and a `[proximity.mgmt]` table
+  (`connect_db -10`, `disconnect_db -25`, dwells 3 s / 6 s, tau 5 s). `stale_after_secs` and
+  the cool-down are shared by both scales. Per-device overrides still cover dBm only.
+* The cool-down starts automatically on every transition to `Far`; `start_cooldown` and
+  `reset` exist for external disconnects. A stale timeout forgets the EMA, so the next sample
+  re-seeds it. Jitter tests use a built-in LCG instead of a `rand` dependency.
+* Not covered here: per-device override plumbing and choosing which tracker applies to which
+  speaker; that belongs to M4/M6.
 
 ## M4: Bluetooth manager
 

@@ -46,6 +46,28 @@ pub struct ProximityConfig {
     pub ema_tau_secs: f64,
     /// No sample for this long counts as out of range.
     pub stale_after_secs: f64,
+    /// After dropping a speaker for being too far, do not re-accept it for this long.
+    pub cooldown_secs: f64,
+    /// Thresholds for the relative mgmt RSSI scale (dB below the controller's golden range).
+    pub mgmt: MgmtProximityConfig,
+}
+
+/// Same logic as [`ProximityConfig`], for the relative scale of the mgmt socket RSSI:
+/// 0 is the ideal window, negative values are dB below it. It updates only every ~3 s, so
+/// the filter and dwell times are longer.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct MgmtProximityConfig {
+    /// Accept (or re-accept) when smoothed RSSI stays at or above this...
+    pub connect_db: i16,
+    /// ...for at least this long.
+    pub connect_dwell_secs: f64,
+    /// Disconnect when smoothed RSSI stays below this...
+    pub disconnect_db: i16,
+    /// ...for at least this long.
+    pub disconnect_dwell_secs: f64,
+    /// Time constant of the time-based EMA.
+    pub ema_tau_secs: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -93,6 +115,20 @@ impl Default for ProximityConfig {
             disconnect_dwell_secs: 5.0,
             ema_tau_secs: 3.0,
             stale_after_secs: 30.0,
+            cooldown_secs: 30.0,
+            mgmt: MgmtProximityConfig::default(),
+        }
+    }
+}
+
+impl Default for MgmtProximityConfig {
+    fn default() -> Self {
+        Self {
+            connect_db: -10,
+            connect_dwell_secs: 3.0,
+            disconnect_db: -25,
+            disconnect_dwell_secs: 6.0,
+            ema_tau_secs: 5.0,
         }
     }
 }
@@ -173,6 +209,25 @@ impl ProximityConfig {
         ] {
             ensure!(v > 0.0, "proximity.{name} must be > 0");
         }
+        ensure!(
+            self.cooldown_secs >= 0.0,
+            "proximity.cooldown_secs must be >= 0"
+        );
+        let m = &self.mgmt;
+        ensure!(
+            m.disconnect_db < m.connect_db,
+            "proximity.mgmt.disconnect_db ({}) must be below connect_db ({}) for hysteresis",
+            m.disconnect_db,
+            m.connect_db
+        );
+        ensure!(
+            m.connect_dwell_secs >= 0.0 && m.disconnect_dwell_secs >= 0.0,
+            "proximity.mgmt dwell times must be >= 0"
+        );
+        ensure!(
+            m.ema_tau_secs > 0.0,
+            "proximity.mgmt.ema_tau_secs must be > 0"
+        );
         Ok(())
     }
 }
