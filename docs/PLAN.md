@@ -278,9 +278,9 @@ connect, disconnect, link RSSI) are spawned and report back. `run` is wired, wit
   re-test what M1 could only check with one speaker: glitches while discovery runs, and
   whether a probe-connect disturbs other active streams. **Done for 10 minutes with 2 speakers
   and 90 s with 3 (below); a multi-hour soak is still open.**
-* README/NixOS: `CAP_NET_ADMIN` route and the `Pairable` issue. **Done** (`README.md`).
+* README/NixOS: `CAP_NET_ADMIN` route and the `Pairable` issue. **Done** (`docs/USAGE.md`).
 * Logging review, clear startup errors. **Done.**
-* Docs: README, systemd user unit. **Done** (`README.md`, `contrib/bt-roam-player.service`).
+* Docs: README, systemd user unit. **Done** (`docs/USAGE.md`, `contrib/bt-roam-player.service`).
 
 **Outcome so far:**
 * bluetoothd or PipeWire going away (tested with `systemctl restart bluetooth` and `systemctl

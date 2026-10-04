@@ -2,6 +2,8 @@
 name = "bt-roam-player"
 version = "0.1.0"
 edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Plays one looping audio file on every nearby Bluetooth speaker, connecting by proximity"
 
 [dependencies]
 anyhow = "1.0.104"

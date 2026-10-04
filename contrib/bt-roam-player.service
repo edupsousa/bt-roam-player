@@ -1,7 +1,7 @@
 # systemd user unit: ~/.config/systemd/user/bt-roam-player.service
 #   systemctl --user daemon-reload && systemctl --user enable --now bt-roam-player
 #
-# ExecStart must point at a copy of the binary that has CAP_NET_ADMIN (see README.md,
+# ExecStart must point at a copy of the binary that has CAP_NET_ADMIN (see docs/USAGE.md,
 # "Link RSSI permission"); without it speakers are never released when you walk away.
 [Unit]
 Description=Play one looping file to every nearby Bluetooth speaker
