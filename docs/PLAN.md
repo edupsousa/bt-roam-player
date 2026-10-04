@@ -271,12 +271,13 @@ connect, disconnect, link RSSI) are spawned and report back. `run` is wired, wit
   speaker, `max_connected`. A speaker that reconnects by itself right after an external drop
   is re-adopted without the dBm cool-down (the cool-down only covers the dBm tracker).
 
-## M7: Hardening [IN PROGRESS]
+## M7: Hardening [DONE 2026-10-03]
 
 * Handle `bluetoothd` or PipeWire restarts. **Done:** the process exits non-zero (see below).
 * Multi-speaker soak test (2-3 speakers, hours), check for leaks and stuck states. Also
   re-test what M1 could only check with one speaker: glitches while discovery runs, and
-  whether a probe-connect disturbs other active streams. **Open.**
+  whether a probe-connect disturbs other active streams. **Done for 10 minutes with 2 speakers
+  (below); a multi-hour soak and a 3-speaker run are still open.**
 * README/NixOS: `CAP_NET_ADMIN` route and the `Pairable` issue. **Done** (`README.md`).
 * Logging review, clear startup errors. **Done.**
 * Docs: README, systemd user unit. **Done** (`README.md`, `contrib/bt-roam-player.service`).
@@ -297,6 +298,20 @@ connect, disconnect, link RSSI) are spawned and report back. `run` is wired, wit
   with `max_connected = 3`; with `max_connected = 1` only the JBL played and the other waited
   for a free slot. No pre-emption (dBm and link dB cannot be compared); still open as an idea.
 * Raw RSSI is logged at `trace`, state transitions at `info`.
+* **Soak, 10 minutes, JBL + XKL-Q5, `twinkle_star.mp3` at volume 0.5, walk-away of the JBL and
+  power-cycle of the XKL:** no warnings or errors, no flapping; RSS flat at about 159 MB, 13
+  threads, 31-34 descriptors from start to end. Found and fixed a real bug: link RSSI is read
+  through one shared mgmt socket, and replies were matched by opcode only, so after one read
+  timed out (the controller is busy while it pages an absent speaker) every later read took
+  the previous reply, failed as "malformed", and both speakers were released as far away
+  after 30 s. Replies for another address are now skipped (unit test added).
+* **Open finding:** when the XKL was powered off, the JBL crackled and then went silent for
+  about 15 s (our stream and link never changed state), recovering when the XKL came back.
+  Probable cause is radio contention while the controller keeps paging the vanished speaker
+  (link-RSSI reads for the JBL timed out as "controller busy" at the same time). Not proven.
+  To try: capture `btmon` during an XKL power-off; probe less often while another speaker
+  plays; tune BlueZ `ReconnectAttempts`. The XKL also crackled a little while playing
+  alone, probably the speaker.
 
 ## Later / out of scope for v1
 

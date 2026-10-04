@@ -137,6 +137,11 @@ fn match_reply(frame: &[u8], opcode: u16, index: u16) -> Result<Reply<'_>, MgmtE
     })
 }
 
+/// Whether a Get Connection Information reply (success or error) is about `addr`.
+fn is_for(data: &[u8], addr: Address) -> bool {
+    data.get(..6) == Some(&wire_address(addr)[..])
+}
+
 fn parse_conn_info(data: &[u8], addr: Address) -> Result<ConnInfo, MgmtError> {
     if data.len() < 10 || data[..6] != wire_address(addr) {
         return Err(MgmtError::Malformed);
@@ -254,6 +259,9 @@ impl MgmtSocket {
             let n = self.recv(&mut buf)?;
             match match_reply(&buf[..n], OP_GET_CONN_INFO, index)? {
                 Reply::Other => continue,
+                // A late reply to an earlier request, e.g. one that timed out for another
+                // speaker. Taking it for ours would leave every later read one reply behind.
+                Reply::Complete { data, .. } if !is_for(data, addr) => continue,
                 Reply::Complete { status: 0, data } => return parse_conn_info(data, addr),
                 Reply::Complete { status, .. } => return Err(MgmtError::from_status(status)),
             }
@@ -299,6 +307,21 @@ mod tests {
         let mut d = wire_address(ADDR).to_vec();
         d.extend_from_slice(&[0, rssi as u8, tx as u8, max as u8]);
         d
+    }
+
+    #[test]
+    fn a_late_reply_for_another_address_is_not_ours() {
+        let other = Address::new([1, 2, 3, 4, 5, 6]);
+        let mut stale = wire_address(other).to_vec();
+        stale.extend_from_slice(&[0, 200, 0, 0]);
+        let frame = complete(OP_GET_CONN_INFO, 0, 0, &stale);
+        let Ok(Reply::Complete { data, .. }) = match_reply(&frame, OP_GET_CONN_INFO, 0) else {
+            panic!("not a reply");
+        };
+        assert!(!is_for(data, ADDR));
+        assert!(is_for(data, other));
+        // A short error reply without an address is never taken for ours either.
+        assert!(!is_for(&[], ADDR));
     }
 
     #[test]
