@@ -305,13 +305,18 @@ connect, disconnect, link RSSI) are spawned and report back. `run` is wired, wit
   timed out (the controller is busy while it pages an absent speaker) every later read took
   the previous reply, failed as "malformed", and both speakers were released as far away
   after 30 s. Replies for another address are now skipped (unit test added).
-* **Open finding:** when the XKL was powered off, the JBL crackled and then went silent for
-  about 15 s (our stream and link never changed state), recovering when the XKL came back.
-  Probable cause is radio contention while the controller keeps paging the vanished speaker
-  (link-RSSI reads for the JBL timed out as "controller busy" at the same time). Not proven.
-  To try: capture `btmon` during an XKL power-off; probe less often while another speaker
-  plays; tune BlueZ `ReconnectAttempts`. The XKL also crackled a little while playing
-  alone, probably the speaker.
+* **Finding (measured, `btmon`):** when the XKL was powered off, the JBL crackled (and once went
+  silent for about 15 s) while our stream and link never changed state. A `btmon` capture shows
+  the XKL stopped acknowledging packets at the power-off and the controller kept the dead link
+  for the 20 s default link supervision timeout (`Connection Timeout (0x08)`). Over those 20 s
+  the JBL's ACL packets took about 57 ms each, against 7-10 ms before and 7 ms after. A speaker
+  that disconnects cleanly (the JBL power-off, `Remote User Terminated`) causes nothing. It is the
+  controller wasting airtime on the dead link, so the player cannot avoid it; a shorter BR/EDR
+  link supervision timeout would limit it. **To try:** BlueZ `main.conf` `[BR] LinkSupervisionTimeout`
+  (NixOS: `hardware.bluetooth.settings.BR.LinkSupervisionTimeout`, 0.625 ms units, default
+  0x7D00 = 20 s), or the mgmt "Set Default System Configuration" command (0x004a) from the
+  player; check with `btmon` whether the kernel applies it to the links. Probing less often
+  while others play is a smaller, separate mitigation.
 
 ## Later / out of scope for v1
 

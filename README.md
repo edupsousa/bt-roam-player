@@ -78,9 +78,11 @@ Legacy-PIN speakers get `pin` (default `0000`).
   `bluetoothctl pairable on` first.
 * `Connect` and `Pair` only work while discovery is running (page timeouts otherwise), so the
   player keeps a discovery session open during each attempt.
-* With two or more speakers on one adapter, a speaker that disappears (powered off, out of
-  range) while the others play can degrade their audio for a few seconds while the controller
-  keeps paging it. Seen once with a JBL GO 2 and an XKL-Q5; under investigation.
+* With two or more speakers on one adapter, a speaker that vanishes without disconnecting
+  (powered off, out of range) degrades the others for up to 20 s: the controller keeps
+  retrying the dead link until the link supervision timeout, and the other speakers' packets
+  take 5-8 times longer. Measured with `btmon` (JBL GO 2 and XKL-Q5). A shorter BlueZ
+  `LinkSupervisionTimeout` (`[BR]` section of `main.conf`) is the likely mitigation, untested.
 * A speaker paired but never connected does not reconnect by itself after power-cycling; connect
   it once.
 * Link RSSI is relative (0 = ideal), discovery RSSI is true dBm; they are not compared with each
