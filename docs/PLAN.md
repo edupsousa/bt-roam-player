@@ -277,7 +277,7 @@ connect, disconnect, link RSSI) are spawned and report back. `run` is wired, wit
 * Multi-speaker soak test (2-3 speakers, hours), check for leaks and stuck states. Also
   re-test what M1 could only check with one speaker: glitches while discovery runs, and
   whether a probe-connect disturbs other active streams. **Done for 10 minutes with 2 speakers
-  (below); a multi-hour soak and a 3-speaker run are still open.**
+  and 90 s with 3 (below); a multi-hour soak is still open.**
 * README/NixOS: `CAP_NET_ADMIN` route and the `Pairable` issue. **Done** (`README.md`).
 * Logging review, clear startup errors. **Done.**
 * Docs: README, systemd user unit. **Done** (`README.md`, `contrib/bt-roam-player.service`).
@@ -305,6 +305,19 @@ connect, disconnect, link RSSI) are spawned and report back. `run` is wired, wit
   timed out (the controller is busy while it pages an absent speaker) every later read took
   the previous reply, failed as "malformed", and both speakers were released as far away
   after 30 s. Replies for another address are now skipped (unit test added).
+* **Never-paired speaker found and used (3 speakers):** with no `allow` list and only the Echo and
+  earbuds denied, a Shokz OpenRun Pro 2 in pairing mode was discovered, paired in 5 s, dropped
+  the link as the others do, was probed back and linked about 18 s after the run started; the
+  XKL linked too (the JBL, see next). A 30 s run is too short: the single 10 s discovery window
+  may miss a new device (it did once), so the new-device test needs at least 60 s.
+* **3 speakers at once** (JBL, XKL-Q5, Shokz; Echo and earbuds denied; `max_connected = 3`): all
+  three seen at startup and linked within 7 s, steady for 90 s, no warnings or flapping.
+* **Bug found and fixed:** at startup, reading a device intermittently failed with D-Bus
+  "Failed to send message" (a different device each run: the MX, the Echo, the JBL). A device
+  whose first read is lost stays unknown until a property changes, so a paired speaker was
+  ignored until it was power-cycled. Reads and the event subscription are now retried (6
+  times, 0.3 s apart). Not reproduced after the fix in three scans, but the failure was
+  intermittent, so this is unproven.
 * **Finding (measured, `btmon`):** when the XKL was powered off, the JBL crackled (and once went
   silent for about 15 s) while our stream and link never changed state. A `btmon` capture shows
   the XKL stopped acknowledging packets at the power-off and the controller kept the dead link

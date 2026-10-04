@@ -149,6 +149,29 @@ async fn watch_devices(
     let _ = tx.send(BtEvent::Lost);
 }
 
+/// Reads of many devices at startup intermittently fail with "Failed to send message" on the
+/// D-Bus connection; a device whose first read is lost would stay unknown until it changed.
+const READ_RETRIES: u32 = 6;
+const READ_RETRY_DELAY: Duration = Duration::from_millis(300);
+
+async fn read_snapshot(device: &bluer::Device) -> Option<DeviceSnapshot> {
+    let mut attempts = 0;
+    loop {
+        match DeviceSnapshot::read(device).await {
+            Ok(snapshot) => return Some(snapshot),
+            Err(e) if attempts < READ_RETRIES => {
+                attempts += 1;
+                tracing::debug!(address = %device.address(), "reading device: {e}; retrying");
+                tokio::time::sleep(READ_RETRY_DELAY * attempts).await;
+            }
+            Err(e) => {
+                tracing::warn!(address = %device.address(), "reading device failed: {e}");
+                return None;
+            }
+        }
+    }
+}
+
 async fn watch_device(
     adapter: bluer::Adapter,
     address: Address,
@@ -157,15 +180,24 @@ async fn watch_device(
     let Ok(device) = adapter.device(address) else {
         return;
     };
-    let Ok(events) = device.events().await else {
-        return;
+    let mut attempts = 0;
+    let events = loop {
+        match device.events().await {
+            Ok(events) => break events,
+            Err(e) if attempts < READ_RETRIES => {
+                attempts += 1;
+                tracing::debug!(%address, "subscribing to device events: {e}; retrying");
+                tokio::time::sleep(READ_RETRY_DELAY * attempts).await;
+            }
+            Err(e) => {
+                tracing::warn!(%address, "cannot watch device: {e}");
+                return;
+            }
+        }
     };
     pin_mut!(events);
-    match DeviceSnapshot::read(&device).await {
-        Ok(snapshot) => {
-            let _ = tx.send(BtEvent::Updated(snapshot));
-        }
-        Err(e) => tracing::debug!(%address, "reading device: {e}"),
+    if let Some(snapshot) = read_snapshot(&device).await {
+        let _ = tx.send(BtEvent::Updated(snapshot));
     }
     while let Some(DeviceEvent::PropertyChanged(prop)) = events.next().await {
         match prop {
@@ -179,7 +211,7 @@ async fn watch_device(
             | DeviceProperty::Uuids(_)
             | DeviceProperty::Name(_)
             | DeviceProperty::Alias(_) => {
-                if let Ok(snapshot) = DeviceSnapshot::read(&device).await {
+                if let Some(snapshot) = read_snapshot(&device).await {
                     let _ = tx.send(BtEvent::Updated(snapshot));
                 }
             }
