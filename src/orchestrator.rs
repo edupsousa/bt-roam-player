@@ -2,7 +2,7 @@
 //! and the audio engine together. One task owns every speaker's state; the slow Bluetooth
 //! calls (pair, connect, disconnect, link RSSI) run in spawned tasks and report back.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -14,7 +14,7 @@ use tokio::sync::mpsc;
 
 use crate::audio::{AudioCommand, AudioEngine, AudioEvent, SinkRef, decode_file};
 use crate::bluetooth::adapter::{Bluetooth, BtEvent};
-use crate::bluetooth::candidate::{evaluate, matches};
+use crate::bluetooth::candidate::{A2DP_SINK, Verdict, evaluate, matches};
 use crate::bluetooth::device::{DeviceSnapshot, connect, disconnect};
 use crate::bluetooth::mgmt::MgmtError;
 use crate::bluetooth::pairing::Pairing;
@@ -74,6 +74,9 @@ struct Entry {
     last_rssi: Option<Timestamp>,
     link_poll_inflight: bool,
     last_seen: Instant,
+    /// Connect threshold (dBm) in force for this speaker, and when we last said it was too weak.
+    connect_dbm: f64,
+    weak_logged: Option<Instant>,
 }
 
 impl Entry {
@@ -95,6 +98,26 @@ impl Entry {
             &self.dbm
         };
         tracker.state() == Prox::Near
+    }
+
+    /// Debug note, at most every 10 s, that the signal is too weak to connect.
+    fn note_weak(&mut self, dbm: i16) {
+        if self.machine.is_engaged() || f64::from(dbm) >= self.connect_dbm {
+            return;
+        }
+        if self
+            .weak_logged
+            .is_some_and(|t| t.elapsed() < Duration::from_secs(10))
+        {
+            return;
+        }
+        self.weak_logged = Some(Instant::now());
+        tracing::debug!(
+            "{} [{}]: signal {dbm} dBm is too weak to connect (needs {:.0} dBm or better)",
+            self.name(),
+            self.snapshot.address,
+            self.connect_dbm
+        );
     }
 
     /// Switch proximity source when the connection state changes.
@@ -138,6 +161,31 @@ impl Entry {
     }
 }
 
+/// One line saying what a device is and why it does not qualify.
+fn ignored_text(s: &DeviceSnapshot, verdict: Verdict) -> String {
+    let why = match verdict {
+        Verdict::Denied => "on the deny list",
+        Verdict::NotAllowed => "not on the allow list",
+        Verdict::VideoDevice => "a TV or other video device",
+        Verdict::NotAudio => "not an audio speaker",
+        Verdict::Accept => "accepted",
+    };
+    let class = s
+        .class
+        .map_or("unknown".to_string(), |c| format!("0x{c:06x}"));
+    let a2dp = if s.uuids.contains(&A2DP_SINK) {
+        "yes"
+    } else {
+        "no"
+    };
+    let rssi = s.rssi.map_or(String::new(), |r| format!(", {r} dBm"));
+    format!(
+        "{} [{}]: {why} (class {class}, A2DP sink {a2dp}{rssi})",
+        s.name.as_deref().unwrap_or("?"),
+        s.address
+    )
+}
+
 struct Orchestrator {
     config: Config,
     bt: Bluetooth,
@@ -148,6 +196,8 @@ struct Orchestrator {
     /// Bluetooth sinks currently in the PipeWire graph.
     sinks: HashSet<Address>,
     done_tx: mpsc::UnboundedSender<Done>,
+    /// Devices ruled out, with the verdict already logged (logged again only if it changes).
+    ignored: HashMap<Address, Verdict>,
     epoch: Instant,
 }
 
@@ -188,6 +238,7 @@ pub async fn run(config: Config, file: &Path) -> Result<()> {
         entries: BTreeMap::new(),
         sinks: HashSet::new(),
         done_tx,
+        ignored: HashMap::new(),
         epoch: Instant::now(),
     };
 
@@ -245,11 +296,14 @@ impl Orchestrator {
             BtEvent::Updated(snapshot) => {
                 let address = snapshot.address;
                 if !self.entries.contains_key(&address) {
-                    if !evaluate(&snapshot.info(), &self.config.allow, &self.config.deny)
-                        .is_accepted()
-                    {
+                    let verdict = evaluate(&snapshot.info(), &self.config.allow, &self.config.deny);
+                    if !verdict.is_accepted() {
+                        if self.ignored.insert(address, verdict) != Some(verdict) {
+                            tracing::debug!("ignoring {}", ignored_text(&snapshot, verdict));
+                        }
                         return;
                     }
+                    self.ignored.remove(&address);
                     let entry = self.new_entry(snapshot.clone());
                     tracing::info!(
                         "{} [{address}]: found ({})",
@@ -289,10 +343,12 @@ impl Orchestrator {
                     if !entry.machine.is_connected() {
                         entry.dbm.sample(now, f64::from(dbm));
                         entry.last_rssi = Some(now);
+                        entry.note_weak(dbm);
                     }
                 }
             }
             BtEvent::Removed(address) => {
+                self.ignored.remove(&address);
                 self.step(address, Event::Gone);
                 self.entries.remove(&address);
             }
@@ -324,6 +380,8 @@ impl Orchestrator {
             last_rssi: None,
             link_poll_inflight: false,
             last_seen: Instant::now(),
+            connect_dbm: params.near,
+            weak_logged: None,
             snapshot,
         }
     }
