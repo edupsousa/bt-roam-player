@@ -201,7 +201,7 @@ struct Orchestrator {
     epoch: Instant,
 }
 
-pub async fn run(config: Config, file: &Path) -> Result<()> {
+pub async fn run(config: Config, file: &Path, adapter: Option<&str>) -> Result<()> {
     let pcm = decode_file(file)?;
     tracing::info!(
         "decoded {}: {:.1}s at {} Hz",
@@ -210,7 +210,7 @@ pub async fn run(config: Config, file: &Path) -> Result<()> {
         pcm.rate
     );
     let (engine, mut audio_events) = AudioEngine::start(pcm)?;
-    let (bt, mut bt_events) = Bluetooth::start(&config.discovery).await?;
+    let (bt, mut bt_events) = Bluetooth::start(adapter, &config.discovery).await?;
     let pairing = Arc::new(Pairing::start(bt.session(), bt.adapter().clone(), &config).await?);
     let link_rssi = match MgmtRssi::new(bt.index()) {
         Ok(m) => Some(Arc::new(m)),

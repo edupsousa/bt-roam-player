@@ -27,6 +27,10 @@ struct Cli {
     #[arg(short, long, global = true, value_name = "PATH")]
     config: Option<PathBuf>,
 
+    /// Bluetooth adapter to use, e.g. hci1 (default: BlueZ's default adapter)
+    #[arg(long, global = true, value_name = "NAME")]
+    adapter: Option<String>,
+
     /// Increase log verbosity (-v debug, -vv trace); overridden by RUST_LOG
     #[arg(short, long, global = true, action = clap::ArgAction::Count)]
     verbose: u8,
@@ -110,7 +114,7 @@ async fn main() -> Result<()> {
     tracing::debug!(?config, "configuration loaded");
 
     match cli.command {
-        Command::Run { file } => orchestrator::run(config, &file).await,
+        Command::Run { file } => orchestrator::run(config, &file, cli.adapter.as_deref()).await,
         Command::Play {
             file,
             sinks,
@@ -120,9 +124,11 @@ async fn main() -> Result<()> {
             unlink_after,
             seconds,
         } => play(file, sinks, addresses, volume, ramp, unlink_after, seconds).await,
-        Command::List { seconds, all } => list::list(&config, seconds, all).await,
-        Command::Pair { seconds } => pair::pair(&config, seconds).await,
-        Command::Forget { address } => pair::forget(&config, address).await,
+        Command::List { seconds, all } => {
+            list::list(&config, cli.adapter.as_deref(), seconds, all).await
+        }
+        Command::Pair { seconds } => pair::pair(&config, cli.adapter.as_deref(), seconds).await,
+        Command::Forget { address } => pair::forget(&config, cli.adapter.as_deref(), address).await,
     }
 }
 

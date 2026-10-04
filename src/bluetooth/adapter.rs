@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use bluer::{AdapterEvent, Address, DeviceEvent, DeviceProperty};
 use futures::{StreamExt, pin_mut};
 use tokio::sync::mpsc;
@@ -35,16 +35,41 @@ pub struct Bluetooth {
 
 impl Bluetooth {
     pub async fn start(
+        adapter_name: Option<&str>,
         discovery: &DiscoveryConfig,
     ) -> Result<(Self, mpsc::UnboundedReceiver<BtEvent>)> {
         let session = bluer::Session::new()
             .await
             .context("connecting to bluetoothd")?;
-        let adapter = session
-            .default_adapter()
-            .await
-            .context("no Bluetooth adapter")?;
+        let adapter = match adapter_name {
+            Some(name) => {
+                let mut names = session.adapter_names().await?;
+                if !names.iter().any(|n| n == name) {
+                    names.sort();
+                    bail!(
+                        "Bluetooth adapter {name} not found (available: {})",
+                        names.join(", ")
+                    );
+                }
+                session.adapter(name)?
+            }
+            None => session
+                .default_adapter()
+                .await
+                .context("no Bluetooth adapter")?,
+        };
         adapter.set_powered(true).await?;
+        tracing::info!(
+            "using Bluetooth adapter {} ({}, \"{}\"){}",
+            adapter.name(),
+            adapter.address().await?,
+            adapter.alias().await?,
+            if adapter_name.is_none() {
+                " [default]"
+            } else {
+                ""
+            }
+        );
         // Without this, pairing appears to succeed but is not bonded (see DESIGN.md).
         adapter.set_pairable(true).await?;
         adapter.set_pairable_timeout(0).await?;

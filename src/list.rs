@@ -25,8 +25,8 @@ struct Row {
     link_raw: Option<f64>,
 }
 
-pub async fn list(config: &Config, seconds: u64, all: bool) -> Result<()> {
-    let (bt, mut events) = Bluetooth::start(&config.discovery).await?;
+pub async fn list(config: &Config, adapter: Option<&str>, seconds: u64, all: bool) -> Result<()> {
+    let (bt, mut events) = Bluetooth::start(adapter, &config.discovery).await?;
     let mgmt = match MgmtRssi::new(bt.index()) {
         Ok(m) => Some(m),
         Err(MgmtError::PermissionDenied) => {

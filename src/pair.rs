@@ -16,8 +16,8 @@ use crate::config::Config;
 const RETRY_AFTER: Duration = Duration::from_secs(30);
 
 /// Run the agent and pair every unpaired audio candidate that shows up, for `seconds`.
-pub async fn pair(config: &Config, seconds: u64) -> Result<()> {
-    let (bt, mut events) = Bluetooth::start(&config.discovery).await?;
+pub async fn pair(config: &Config, adapter: Option<&str>, seconds: u64) -> Result<()> {
+    let (bt, mut events) = Bluetooth::start(adapter, &config.discovery).await?;
     let pairing = Pairing::start(bt.session(), bt.adapter().clone(), config).await?;
     tracing::info!("agent registered; put a speaker in pairing mode ({seconds} s)");
     let deadline = tokio::time::sleep(Duration::from_secs(seconds));
@@ -72,8 +72,8 @@ pub async fn pair(config: &Config, seconds: u64) -> Result<()> {
     Ok(())
 }
 
-pub async fn forget(config: &Config, address: Address) -> Result<()> {
-    let (bt, _events) = Bluetooth::start(&config.discovery).await?;
+pub async fn forget(config: &Config, adapter: Option<&str>, address: Address) -> Result<()> {
+    let (bt, _events) = Bluetooth::start(adapter, &config.discovery).await?;
     let pairing = Pairing::start(bt.session(), bt.adapter().clone(), config).await?;
     pairing.forget(address).await?;
     println!("removed {address}");

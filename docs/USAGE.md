@@ -11,8 +11,10 @@ bt-roam-player pair [-s SECS]              # pair every speaker in pairing mode
 bt-roam-player forget AA:BB:CC:DD:EE:FF    # remove a paired speaker
 ```
 
-Flags: `-c PATH` config file, `-v`/`-vv` log level (or `RUST_LOG`). Configuration is optional,
-see `../config.example.toml`.
+Flags: `-c PATH` config file, `--adapter hciN` Bluetooth adapter to use (default: BlueZ's
+default adapter; the one in use is logged at startup; bonds are per adapter, so speakers must
+be paired on the adapter you select), `-v`/`-vv` log level (or `RUST_LOG`). Configuration is
+optional, see `../config.example.toml`.
 
 ## Build
 
