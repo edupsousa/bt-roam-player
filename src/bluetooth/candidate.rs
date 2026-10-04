@@ -104,7 +104,7 @@ fn glob(pattern: &str, text: &str) -> bool {
 mod tests {
     use super::*;
 
-    const ADDR: Address = Address::new([0x04, 0xCB, 0x88, 0xAC, 0x79, 0x3E]);
+    const ADDR: Address = Address::new([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
 
     fn info(class: Option<u32>, uuids: &[Uuid]) -> DeviceInfo<'_> {
         DeviceInfo {
@@ -160,7 +160,7 @@ mod tests {
     #[test]
     fn deny_wins_over_everything() {
         let i = info(Some(0x200414), &[A2DP_SINK]);
-        let deny = vec!["04:cb:88:ac:79:3e".to_string()];
+        let deny = vec!["00:11:22:33:44:55".to_string()];
         let allow = vec!["JBL*".to_string()];
         assert_eq!(evaluate(&i, &allow, &deny), Verdict::Denied);
         assert_eq!(evaluate(&i, &[], &["jbl *".into()]), Verdict::Denied);
@@ -204,6 +204,6 @@ mod tests {
             ..info(Some(0x200414), &[])
         };
         assert!(!matches("*", &i));
-        assert!(matches("04:CB:88:AC:79:3E", &i));
+        assert!(matches("00:11:22:33:44:55", &i));
     }
 }

@@ -290,7 +290,7 @@ fn cap_eff_has_net_admin(status: &str) -> bool {
 mod tests {
     use super::*;
 
-    const ADDR: Address = Address::new([0x04, 0xCB, 0x88, 0xAC, 0x79, 0x3E]);
+    const ADDR: Address = Address::new([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
 
     fn complete(opcode: u16, index: u16, status: u8, data: &[u8]) -> Vec<u8> {
         let mut params = opcode.to_le_bytes().to_vec();
@@ -329,7 +329,7 @@ mod tests {
         let got = encode_get_conn_info(0, ADDR, AddressType::BrEdr);
         // opcode 0x0031, index 0, length 7, address least significant byte first, type 0.
         let want = [
-            0x31, 0x00, 0x00, 0x00, 0x07, 0x00, 0x3E, 0x79, 0xAC, 0x88, 0xCB, 0x04, 0x00,
+            0x31, 0x00, 0x00, 0x00, 0x07, 0x00, 0x55, 0x44, 0x33, 0x22, 0x11, 0x00, 0x00,
         ];
         assert_eq!(got, want);
     }
@@ -427,7 +427,7 @@ mod tests {
     }
 
     /// Live read against a connected speaker; needs CAP_NET_ADMIN (e.g. run the test binary
-    /// with sudo). `BT_TEST_ADDR=04:CB:88:AC:79:3E cargo nextest run --run-ignored all live`
+    /// with sudo). `BT_TEST_ADDR=00:11:22:33:44:55 cargo nextest run --run-ignored all live`
     #[test]
     #[ignore = "needs hardware and CAP_NET_ADMIN"]
     fn live_connection_info() {

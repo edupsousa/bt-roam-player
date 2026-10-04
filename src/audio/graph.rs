@@ -54,7 +54,7 @@ struct Port {
 }
 
 /// Registry node globals carry only a subset of the properties (no `api.bluez5.address`),
-/// but the WirePlumber-assigned name embeds the address: `bluez_output.04_CB_88_AC_79_3E.1`.
+/// but the WirePlumber-assigned name embeds the address: `bluez_output.00_11_22_33_44_55.1`.
 fn address_from_node_name(name: &str) -> Option<Address> {
     let mac = name.strip_prefix("bluez_output.")?.get(..17)?;
     mac.replace('_', ":").parse().ok()
@@ -179,9 +179,9 @@ mod tests {
 
     fn bt_sink() -> Props {
         [
-            ("node.name", "bluez_output.04_CB_88_AC_79_3E.1"),
+            ("node.name", "bluez_output.00_11_22_33_44_55.1"),
             ("media.class", "Audio/Sink"),
-            ("api.bluez5.address", "04:CB:88:AC:79:3E"),
+            ("api.bluez5.address", "00:11:22:33:44:55"),
         ]
         .into()
     }
@@ -190,11 +190,11 @@ mod tests {
     fn recognises_bluetooth_sink() {
         let mut g = Graph::default();
         let info = node(&mut g, 90, &bt_sink()).unwrap();
-        let addr: Address = "04:CB:88:AC:79:3E".parse().unwrap();
+        let addr: Address = "00:11:22:33:44:55".parse().unwrap();
         assert_eq!(info.address, Some(addr));
         assert!(g.find(&SinkRef::Address(addr)).is_some());
         assert!(
-            g.find(&SinkRef::Name("bluez_output.04_CB_88_AC_79_3E.1".into()))
+            g.find(&SinkRef::Name("bluez_output.00_11_22_33_44_55.1".into()))
                 .is_some()
         );
     }
@@ -203,11 +203,11 @@ mod tests {
     fn address_parsed_from_node_name() {
         let mut g = Graph::default();
         let p: Props = [
-            ("node.name", "bluez_output.04_CB_88_AC_79_3E.1"),
+            ("node.name", "bluez_output.00_11_22_33_44_55.1"),
             ("media.class", "Audio/Sink"),
         ]
         .into();
-        let addr: Address = "04:CB:88:AC:79:3E".parse().unwrap();
+        let addr: Address = "00:11:22:33:44:55".parse().unwrap();
         assert_eq!(node(&mut g, 90, &p).unwrap().address, Some(addr));
     }
 

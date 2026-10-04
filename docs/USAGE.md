@@ -47,12 +47,12 @@ One line per notable change, with the speaker's name and address, and a one-line
 30 s:
 
 ```
-JBL GO 2 [04:CB:88:AC:79:3E]: found (paired)
-JBL GO 2 [04:CB:88:AC:79:3E]: connecting
-JBL GO 2 [04:CB:88:AC:79:3E]: playing
-XKL-Q5 [BA:87:07:8D:C3:12]: lost the connection (powered off or out of range)
-JBL GO 2 [04:CB:88:AC:79:3E]: moved away, releasing
-JBL GO 2 [04:CB:88:AC:79:3E]: disconnected
+JBL GO 2 [00:11:22:33:44:55]: found (paired)
+JBL GO 2 [00:11:22:33:44:55]: connecting
+JBL GO 2 [00:11:22:33:44:55]: playing
+XKL-Q5 [66:77:88:99:AA:BB]: lost the connection (powered off or out of range)
+JBL GO 2 [00:11:22:33:44:55]: moved away, releasing
+JBL GO 2 [00:11:22:33:44:55]: disconnected
 status: playing on 1 of 3: JBL GO 2; others: XKL-Q5 (idle)
 ```
 
