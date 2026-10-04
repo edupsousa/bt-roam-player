@@ -297,7 +297,10 @@ connect, disconnect, link RSSI) are spawned and report back. `run` is wired, wit
 * **Multi-speaker verified** (JBL + XKL-Q5): both paired, connected and played within 15 s
   with `max_connected = 3`; with `max_connected = 1` only the JBL played and the other waited
   for a free slot. No pre-emption (dBm and link dB cannot be compared); still open as an idea.
-* Raw RSSI is logged at `trace`, state transitions at `info`.
+* `run` prints one readable line per notable change (found, pairing, paired, connecting,
+  playing, moved away, disconnected, lost the connection, failures with the retry delay) and a
+  one-line summary of who is playing every 30 s (`report.rs`, unit-tested); the raw state machine
+  moved to `-v`. A status socket/subcommand was tried and dropped in favour of this.
 * **Soak, 10 minutes, JBL + XKL-Q5, `twinkle_star.mp3` at volume 0.5, walk-away of the JBL and
   power-cycle of the XKL:** no warnings or errors, no flapping; RSS flat at about 159 MB, 13
   threads, 31-34 descriptors from start to end. Found and fixed a real bug: link RSSI is read

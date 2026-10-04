@@ -5,6 +5,7 @@ mod list;
 mod orchestrator;
 mod pair;
 mod proximity;
+mod report;
 mod speaker;
 
 use std::path::PathBuf;

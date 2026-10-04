@@ -21,10 +21,13 @@ use crate::bluetooth::pairing::Pairing;
 use crate::bluetooth::rssi::{MgmtRssi, RssiSource};
 use crate::config::Config;
 use crate::proximity::{Params, State as Prox, Timestamp, Tracker};
+use crate::report::{Item, describe, label, status_line};
 use crate::speaker::{Action, Event, Machine, Timing};
 
 /// How often deadlines and proximity timers are checked.
 const TICK: Duration = Duration::from_secs(1);
+/// How often the summary of who is playing is printed.
+const STATUS_EVERY: Duration = Duration::from_secs(30);
 /// How often the link RSSI of connected speakers is read.
 const LINK_POLL: Duration = Duration::from_secs(3);
 /// Volume ramp when a speaker is linked.
@@ -190,6 +193,8 @@ pub async fn run(config: Config, file: &Path) -> Result<()> {
 
     let mut tick = tokio::time::interval(TICK);
     let mut poll = tokio::time::interval(LINK_POLL);
+    let mut summary =
+        tokio::time::interval_at(tokio::time::Instant::now() + STATUS_EVERY, STATUS_EVERY);
     let mut sigterm = signal(SignalKind::terminate())?;
     tracing::info!("running; Ctrl-C to stop");
     let mut failure = None;
@@ -199,6 +204,7 @@ pub async fn run(config: Config, file: &Path) -> Result<()> {
             _ = sigterm.recv() => break,
             _ = tick.tick() => o.on_tick(),
             _ = poll.tick() => o.poll_links(),
+            _ = summary.tick() => tracing::info!("{}", o.status_line()),
             ev = bt_events.recv() => match ev {
                 Some(BtEvent::Lost) | None => {
                     failure = Some("lost bluetoothd");
@@ -245,7 +251,15 @@ impl Orchestrator {
                         return;
                     }
                     let entry = self.new_entry(snapshot.clone());
-                    tracing::info!(%address, name = entry.name(), "speaker seen");
+                    tracing::info!(
+                        "{} [{address}]: found ({})",
+                        entry.name(),
+                        if snapshot.paired {
+                            "paired"
+                        } else {
+                            "not paired"
+                        }
+                    );
                     self.entries.insert(address, entry);
                     if self.sinks.contains(&address) {
                         self.step(address, Event::SinkAppeared);
@@ -401,9 +415,9 @@ impl Orchestrator {
     /// Connect to paired, idle speakers that give no discovery RSSI, one by one while slots
     /// are free; the link RSSI then confirms or releases them.
     fn start_probes(&mut self, now: Timestamp) {
-        for e in self.entries.values_mut() {
+        for (address, e) in self.entries.iter_mut() {
             if e.probing && e.machine.is_connected() && e.link.state() == Prox::Near {
-                tracing::info!(name = e.name(), "probe confirmed: speaker is near");
+                tracing::info!("{} [{address}]: it is near, keeping it", e.name());
                 e.probing = false;
             }
         }
@@ -426,11 +440,33 @@ impl Orchestrator {
         });
         let Some((&address, _)) = due else { return };
         let e = self.entries.get_mut(&address).expect("just found");
-        tracing::info!(%address, name = e.name(), "no discovery RSSI: probing with a connect");
+        tracing::debug!(%address, name = e.name(), "no discovery RSSI: probing with a connect");
         e.probing = true;
         e.granted = true;
         e.next_probe = now + PROBE_INTERVAL;
         self.step(address, Event::Want(true));
+    }
+
+    /// One line: who is playing, and the state of the other speakers.
+    fn status_line(&self) -> String {
+        let now = self.now();
+        let items: Vec<Item> = self
+            .entries
+            .values()
+            .map(|e| Item {
+                name: e.name().to_string(),
+                playing: e.machine.state() == crate::speaker::State::Linked,
+                label: label(
+                    e.machine.state(),
+                    e.snapshot.paired,
+                    e.machine.is_connected(),
+                    e.blocked,
+                    e.probing,
+                    now,
+                ),
+            })
+            .collect();
+        status_line(&items, self.config.max_connected)
     }
 
     fn poll_links(&mut self) {
@@ -483,7 +519,10 @@ impl Orchestrator {
                     && !e.blocked
                 {
                     e.blocked = true;
-                    tracing::info!(address = %a, name = e.name(), "near, waiting for a free slot (max_connected)");
+                    tracing::info!(
+                        "{} [{a}]: near, waiting for a free slot (max_connected)",
+                        e.name()
+                    );
                 }
                 continue;
             }
@@ -511,7 +550,10 @@ impl Orchestrator {
         let actions = entry.machine.handle(event, now);
         let after = entry.machine.state();
         if std::mem::discriminant(&before) != std::mem::discriminant(&after) {
-            tracing::info!(%address, name = entry.name(), "{before:?} -> {after:?} on {event:?}");
+            tracing::debug!(%address, name = entry.name(), "{before:?} -> {after:?} on {event:?}");
+        }
+        if let Some(text) = describe(before, after, event, entry.probing, now) {
+            tracing::info!("{} [{address}]: {text}", entry.name());
         }
         entry.sync_connected(now, link_rssi);
         if actions.contains(&Action::ExternalDrop) {

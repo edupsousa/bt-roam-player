@@ -41,6 +41,26 @@ see `config.example.toml`.
 * If bluetoothd or PipeWire goes away the process exits with an error. Run it under a
   supervisor (see `contrib/bt-roam-player.service`) and it restarts with fresh state.
 
+## What `run` prints
+
+One line per notable change, with the speaker's name and address, and a one-line summary every
+30 s:
+
+```
+JBL GO 2 [04:CB:88:AC:79:3E]: found (paired)
+JBL GO 2 [04:CB:88:AC:79:3E]: connecting
+JBL GO 2 [04:CB:88:AC:79:3E]: playing
+XKL-Q5 [BA:87:07:8D:C3:12]: lost the connection (powered off or out of range)
+JBL GO 2 [04:CB:88:AC:79:3E]: moved away, releasing
+JBL GO 2 [04:CB:88:AC:79:3E]: disconnected
+status: playing on 1 of 3: JBL GO 2; others: XKL-Q5 (idle)
+```
+
+The changes covered are found, pairing, paired, connecting, playing, moved away (released),
+disconnected, lost the connection, could not connect or pair (with the retry delay), and
+waiting for a free slot. `-v` adds the raw state machine, links and discovery windows, `-vv`
+raw RSSI.
+
 ## Link RSSI permission (`CAP_NET_ADMIN`)
 
 Reading the RSSI of a live connection uses the kernel management socket and needs
