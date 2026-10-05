@@ -31,7 +31,8 @@ The audio is decoded once and played through PipeWire, which resamples it for ea
 cargo build --release
 ```
 
-The binary is `target/release/bt-roam-player`.
+The binary is `target/release/bt-roam-player`. To cross-compile for a Raspberry Pi, see
+[docs/CROSS.md](docs/CROSS.md).
 
 ## Run
 
