@@ -6,6 +6,7 @@ mod orchestrator;
 mod pair;
 mod proximity;
 mod report;
+mod session;
 mod speaker;
 
 use std::path::PathBuf;

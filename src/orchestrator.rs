@@ -22,7 +22,8 @@ use crate::bluetooth::rssi::{MgmtRssi, RssiSource};
 use crate::config::Config;
 use crate::proximity::{Params, State as Prox, Timestamp, Tracker};
 use crate::report::{Item, describe, label, status_line};
-use crate::speaker::{Action, Event, Machine, Timing};
+use crate::session::Session;
+use crate::speaker::{Action, Event, Machine, State, Timing};
 
 /// How often deadlines and proximity timers are checked.
 const TICK: Duration = Duration::from_secs(1);
@@ -199,6 +200,8 @@ struct Orchestrator {
     /// Devices ruled out, with the verdict already logged (logged again only if it changes).
     ignored: HashMap<Address, Verdict>,
     epoch: Instant,
+    /// Counters for the summary printed on exit.
+    session: Session,
 }
 
 pub async fn run(config: Config, file: &Path, adapter: Option<&str>) -> Result<()> {
@@ -240,6 +243,7 @@ pub async fn run(config: Config, file: &Path, adapter: Option<&str>) -> Result<(
         done_tx,
         ignored: HashMap::new(),
         epoch: Instant::now(),
+        session: Session::new(Instant::now()),
     };
 
     let mut tick = tokio::time::interval(TICK);
@@ -274,7 +278,10 @@ pub async fn run(config: Config, file: &Path, adapter: Option<&str>) -> Result<(
         }
         o.reconcile();
     }
+    o.session.finish(Instant::now());
+    let summary = o.session.render(Instant::now());
     o.shutdown().await;
+    eprintln!("\n{summary}");
     match failure {
         // A non-zero exit lets a supervisor (systemd Restart=on-failure) start from scratch,
         // which rebuilds all state once the daemon is back.
@@ -314,6 +321,7 @@ impl Orchestrator {
                             "not paired"
                         }
                     );
+                    self.session.seen(address, snapshot.name.as_deref());
                     self.entries.insert(address, entry);
                     if self.sinks.contains(&address) {
                         self.step(address, Event::SinkAppeared);
@@ -420,12 +428,20 @@ impl Orchestrator {
         let now = self.now();
         match done {
             Done::Pair(a, ok) => {
+                if !ok {
+                    self.session.failed(a);
+                }
                 if let (true, Some(e)) = (ok, self.entries.get_mut(&a)) {
                     e.paired_at = Some(now);
                 }
                 self.step(a, Event::PairResult(ok));
             }
-            Done::Connect(a, ok) => self.step(a, Event::ConnectResult(ok)),
+            Done::Connect(a, ok) => {
+                if !ok {
+                    self.session.failed(a);
+                }
+                self.step(a, Event::ConnectResult(ok));
+            }
             Done::Disconnect(a, ok) => self.step(a, Event::DisconnectResult(ok)),
             Done::Link(a, value) => {
                 if let Some(entry) = self.entries.get_mut(&a) {
@@ -609,6 +625,11 @@ impl Orchestrator {
         let after = entry.machine.state();
         if std::mem::discriminant(&before) != std::mem::discriminant(&after) {
             tracing::debug!(%address, name = entry.name(), "{before:?} -> {after:?} on {event:?}");
+        }
+        match (before == State::Linked, after == State::Linked) {
+            (false, true) => self.session.started_playing(address, Instant::now()),
+            (true, false) => self.session.stopped_playing(address, Instant::now()),
+            _ => {}
         }
         if let Some(text) = describe(before, after, event, entry.probing, now) {
             tracing::info!("{} [{address}]: {text}", entry.name());

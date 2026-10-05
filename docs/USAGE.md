@@ -63,6 +63,25 @@ disconnected, lost the connection, could not connect or pair (with the retry del
 waiting for a free slot. `-v` adds the raw state machine, links and discovery windows, `-vv`
 raw RSSI.
 
+## Session summary
+
+When `run` stops (Ctrl-C, SIGTERM, or losing bluetoothd or PipeWire) it prints a summary to
+stderr, after the speakers have been released:
+
+```
+Session summary (12m 40s)
+  speakers seen: 3   played on: 2   failed attempts: 1
+  total playing time: 19m 05s across 2 speakers; at least one speaker playing: 15m 00s
+    JBL GO 2 [00:11:22:33:44:55]  3 connections  11m 20s
+    XKL-Q5 [66:77:88:99:AA:BB]  1 connection  7m 45s
+    Shokz [CC:DD:EE:FF:00:11]  seen, never played
+```
+
+"Seen" counts audio speakers that passed the allow/deny filters. A connection counts once the
+speaker reaches the playing state. "Total playing time" adds up every speaker, so it exceeds
+the session length when several play at once; the "at least one" figure does not. Failed
+attempts are pairing and connect failures.
+
 ## Link RSSI permission (`CAP_NET_ADMIN`)
 
 Reading the RSSI of a live connection uses the kernel management socket and needs

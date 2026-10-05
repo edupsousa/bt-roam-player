@@ -40,7 +40,8 @@ bt-roam-player run --file loop.flac
 ```
 
 Any format that Symphonia reads works (FLAC, MP3, WAV, Ogg, ...). Press Ctrl-C to stop; speakers
-fade out and are disconnected.
+fade out and are disconnected, and a summary of the session (speakers seen, connections, playing
+time) is printed.
 
 | Command | What it does |
 | --- | --- |

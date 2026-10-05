@@ -335,6 +335,8 @@ src/
 ├── config.rs            # optional config.toml: thresholds, limits, allow/deny filters
 ├── orchestrator.rs      # event loop, owns the speaker actors
 ├── speaker.rs           # per-speaker state machine (pure, unit-testable)
+├── report.rs            # log lines and the periodic status line (pure)
+├── session.rs           # exit summary: speakers seen, connections, playing time (pure)
 ├── bluetooth/
 │   ├── mod.rs
 │   ├── adapter.rs       # duty-cycled discovery, device event stream

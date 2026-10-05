@@ -301,6 +301,9 @@ connect, disconnect, link RSSI) are spawned and report back. `run` is wired, wit
   playing, moved away, disconnected, lost the connection, failures with the retry delay) and a
   one-line summary of who is playing every 30 s (`report.rs`, unit-tested); the raw state machine
   moved to `-v`. A status socket/subcommand was tried and dropped in favour of this.
+* On exit `run` prints a session summary to stderr (`session.rs`, unit-tested): speakers seen,
+  speakers played on, failed pair/connect attempts, total and "at least one" playing time, and
+  connections and playing time per speaker. A connection counts when a speaker reaches `Linked`.
 * **Soak, 10 minutes, JBL + XKL-Q5, `twinkle_star.mp3` at volume 0.5, walk-away of the JBL and
   power-cycle of the XKL:** no warnings or errors, no flapping; RSS flat at about 159 MB, 13
   threads, 31-34 descriptors from start to end. Found and fixed a real bug: link RSSI is read
