@@ -59,6 +59,15 @@ impl From<io::Error> for MgmtError {
 }
 
 impl MgmtError {
+    /// Like `From<io::Error>`, but names the failing step in the message of a generic I/O
+    /// error, so the log shows whether `send`, `recv` or the drain hit it.
+    fn from_io(step: &str, e: io::Error) -> Self {
+        match Self::from(e) {
+            Self::Io(msg) => Self::Io(format!("{step}: {msg}")),
+            other => other,
+        }
+    }
+
     fn from_status(status: u8) -> Self {
         match status {
             0x02 => Self::NotConnected,
@@ -238,6 +247,35 @@ impl MgmtSocket {
         Ok(n as usize)
     }
 
+    /// Throw away whatever is queued on the socket without blocking. It also receives
+    /// broadcast events that nobody reads between calls, and a full receive buffer must not
+    /// be able to starve the next reply. Returns the number of frames discarded.
+    fn drain(&self) -> io::Result<usize> {
+        let mut buf = [0u8; 512];
+        let mut dropped = 0;
+        loop {
+            // SAFETY: `buf` is valid for writes of `buf.len()` bytes.
+            let n = unsafe {
+                libc::recv(
+                    self.fd.as_raw_fd(),
+                    buf.as_mut_ptr().cast(),
+                    buf.len(),
+                    libc::MSG_DONTWAIT,
+                )
+            };
+            if n >= 0 {
+                dropped += 1;
+                continue;
+            }
+            let e = io::Error::last_os_error();
+            match e.kind() {
+                io::ErrorKind::WouldBlock => return Ok(dropped),
+                io::ErrorKind::Interrupted => {}
+                _ => return Err(e),
+            }
+        }
+    }
+
     /// RSSI and TX power of the live link to `addr` on controller `index` (0 for `hci0`).
     /// Blocks for at most `timeout`.
     pub fn connection_info(
@@ -248,15 +286,23 @@ impl MgmtSocket {
         timeout: Duration,
     ) -> Result<ConnInfo, MgmtError> {
         let deadline = Instant::now() + timeout;
-        self.send(&encode_get_conn_info(index, addr, ty))?;
+        let dropped = self.drain().map_err(|e| MgmtError::from_io("drain", e))?;
+        if dropped > 0 {
+            tracing::trace!(dropped, "mgmt: discarded queued frames before the request");
+        }
+        self.send(&encode_get_conn_info(index, addr, ty))
+            .map_err(|e| MgmtError::from_io("send", e))?;
         let mut buf = [0u8; 512];
         loop {
             let left = deadline.saturating_duration_since(Instant::now());
             if left.is_zero() {
                 return Err(MgmtError::Timeout);
             }
-            self.set_read_timeout(left)?;
-            let n = self.recv(&mut buf)?;
+            self.set_read_timeout(left)
+                .map_err(|e| MgmtError::from_io("set timeout", e))?;
+            let n = self
+                .recv(&mut buf)
+                .map_err(|e| MgmtError::from_io("recv", e))?;
             match match_reply(&buf[..n], OP_GET_CONN_INFO, index)? {
                 Reply::Other => continue,
                 // A late reply to an earlier request, e.g. one that timed out for another

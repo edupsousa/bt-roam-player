@@ -107,6 +107,13 @@ Constraints that shape the behaviour:
 CLI: `bt-roam-player run --file track.flac` is the main mode; `list` shows what the app
 currently sees; `forget <address>` removes a paired speaker.
 
+**Adapter selection:** the global `--adapter hciN` flag picks the controller for every
+subcommand. `Bluetooth::start` looks the name up in BlueZ's adapter list and fails with the
+list of available names if it is missing; without the flag it uses BlueZ's default adapter.
+The adapter in use (name, address, alias, `[default]` when not chosen explicitly) is logged
+at startup. The mgmt RSSI source uses the same adapter's index (`bt.index()`). Bonds are
+stored per adapter, so speakers must be paired on the adapter that is selected.
+
 ### 2. Proximity: RSSI source, filtering and hysteresis
 
 **RSSI availability is the biggest constraint.** BlueZ's `Device1.RSSI` is only updated
@@ -145,6 +152,16 @@ target speakers, since it varies by controller and speaker.
   **Implemented (M3):** `src/proximity.rs` with `Params::dbm`/`Params::mgmt`; mgmt defaults are
   `[proximity.mgmt]` `connect_db -10`, `disconnect_db -25`, dwells 3 s / 6 s, tau 5 s, plus a
   shared `cooldown_secs = 30` that starts whenever a speaker is dropped as too far.
+
+**Mgmt socket hygiene:** the control-channel socket also receives the kernel's broadcast
+events (device connected, new link key, ...), and nothing reads it between polls. Before every
+request `MgmtSocket::connection_info` therefore drains the socket with non-blocking reads, so a
+backlog cannot fill the receive buffer and starve the reply (this also discards late replies to
+earlier, timed-out requests; the per-address reply check stays as a second guard). I/O errors
+carry the failing step (`drain`, `send`, `recv`, `set timeout`) in their message. A
+`Cannot allocate memory (os error 12)` was seen every 3 s for a speaker whose link was going
+away; the cause is **not confirmed** (see PLAN.md, post-M7 notes), the drain and the step
+labels are a hardening plus a diagnostic.
 
 Discovery also has a cost: inquiry on classic radios competes with active A2DP streams and
 can cause audio glitches. Run discovery in **duty-cycled bursts** (e.g. 10 s on / 20 s off,

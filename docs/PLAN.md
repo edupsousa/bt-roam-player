@@ -334,6 +334,24 @@ connect, disconnect, link RSSI) are spawned and report back. `run` is wired, wit
   player; check with `btmon` whether the kernel applies it to the links. Probing less often
   while others play is a smaller, separate mitigation.
 
+## Post-M7 changes
+
+* **`--adapter hciN` (2026-10-04):** global CLI option to choose the Bluetooth adapter for
+  `run`, `list`, `pair` and `forget`; a missing name fails listing the available ones, and the
+  adapter in use is logged at startup. Documented in DESIGN.md (decision 1) and USAGE.md.
+* **Mgmt socket `ENOMEM` investigation (2026-10-05):** a run logged
+  `mgmt rssi: management socket: Cannot allocate memory (os error 12)` every 3 s for one
+  connected speaker, stopping when that speaker went away (the next line was an unrelated
+  probe). The failing syscall was not identified (the error was not labelled). Hypotheses:
+  (1) a kernel allocation failure while the link is being torn down; (2) the unread broadcast
+  events filling the socket's receive buffer. **Changes:** `connection_info` drains the socket
+  before each request, and I/O errors name the step (`drain`/`send`/`recv`/`set timeout`).
+  Unit tests and clippy pass; **not verified on hardware**.
+  **To do:** rerun the roaming scenario with `RUST_LOG=trace`. A `send:` error points at the
+  kernel command side, `recv:` at reply delivery, no error means the backlog was the cause
+  (the `trace` line with the drained frame count would confirm). If it persists, treat
+  `ENOMEM` as "no sample" at lower log level and reopen the socket after repeated failures.
+
 ## Later / out of scope for v1
 
 * Per-speaker delay compensation for same-room use.

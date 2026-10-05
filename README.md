@@ -49,7 +49,8 @@ fade out and are disconnected.
 | `pair [-s SECS]` | pair every speaker in pairing mode |
 | `forget ADDRESS` | remove a paired speaker |
 
-Global flags: `-c PATH` for a config file, `-v`/`-vv` for more logging (or `RUST_LOG`).
+Global flags: `-c PATH` for a config file, `--adapter hciN` to pick the Bluetooth adapter
+(default: BlueZ's default), `-v`/`-vv` for more logging (or `RUST_LOG`).
 Configuration is optional; every key and its default is in
 [config.example.toml](config.example.toml).
 

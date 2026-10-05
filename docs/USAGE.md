@@ -84,6 +84,11 @@ released by proximity, and ones that connect on their own are adopted without a 
   environment: `sudo env "LD_LIBRARY_PATH=$LD_LIBRARY_PATH" "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" ...`.
   Under `sudo`, PipeWire is reached through `XDG_RUNTIME_DIR`.
 
+With `-v`, a failed link RSSI read is logged as `mgmt rssi: management socket: <step>: <error>`,
+where the step (`drain`, `send`, `recv`) says which socket operation failed. Before each read
+the player empties the socket's queue of unrelated kernel events. A read that fails just counts
+as no sample, so the speaker is released only if the readings stay missing past the stale time.
+
 ## Pairing and its security implications
 
 With `auto_pair = true` (default) the player registers a BlueZ pairing agent that accepts
