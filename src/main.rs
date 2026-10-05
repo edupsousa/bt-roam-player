@@ -2,6 +2,7 @@ mod audio;
 mod bluetooth;
 mod config;
 mod list;
+mod loglevel;
 mod orchestrator;
 mod pair;
 mod proximity;
@@ -14,7 +15,6 @@ use std::path::PathBuf;
 use anyhow::Result;
 use bluer::Address;
 use clap::{Parser, Subcommand};
-use tracing_subscriber::EnvFilter;
 
 use crate::config::Config;
 
@@ -94,28 +94,18 @@ enum Command {
     },
 }
 
-fn init_tracing(verbosity: u8) {
-    let default = match verbosity {
-        0 => "info",
-        1 => "debug",
-        _ => "trace",
-    };
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default));
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_target(false)
-        .init();
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    init_tracing(cli.verbose);
+    let log_level = loglevel::init(cli.verbose);
     let config = Config::load(cli.config.as_deref())?;
     tracing::debug!(?config, "configuration loaded");
 
     match cli.command {
-        Command::Run { file } => orchestrator::run(config, &file, cli.adapter.as_deref()).await,
+        Command::Run { file } => {
+            log_level.spawn_signal_handler()?;
+            orchestrator::run(config, &file, cli.adapter.as_deref()).await
+        }
         Command::Play {
             file,
             sinks,

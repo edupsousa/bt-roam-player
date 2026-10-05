@@ -63,6 +63,21 @@ disconnected, lost the connection, could not connect or pair (with the retry del
 waiting for a free slot. `-v` adds the raw state machine, links and discovery windows, `-vv`
 raw RSSI.
 
+## Changing the log level while running
+
+Send `SIGUSR1` to a running `run` to make logging one level more verbose and `SIGUSR2` to make it
+one level quieter, within `error`, `warn`, `info`, `debug`, `trace` (it stops at either end):
+
+```
+kill -USR1 $(pidof bt-roam-player)    # more verbose
+kill -USR2 $(pidof bt-roam-player)    # quieter
+systemctl kill -s USR1 <unit>         # when run as a systemd service
+```
+
+Each change logs `log level now <level>`. The starting level comes from `-v`/`-vv` or `RUST_LOG`.
+If `RUST_LOG` holds per-module directives (e.g. `bluer=warn,info`), the first signal replaces them
+with a plain level, stepping from `info`. Only `run` listens for these signals.
+
 ## Session summary
 
 When `run` stops (Ctrl-C, SIGTERM, or losing bluetoothd or PipeWire) it prints a summary to
